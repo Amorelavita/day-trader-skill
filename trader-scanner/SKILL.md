@@ -7,12 +7,14 @@ description: >-
   runs a pre-market scan of daily closes (20-day closing-high breakout, bull
   flag, reclaimed the 20-day average, oversold, oversold bounce) and an
   intraday opening-range breakout scan on 5-minute bars, then writes
-  trader/watchlist.json for trader-news and trader-entry. Free Yahoo data,
-  bar by bar. Use when the user says "scan the market", "find me setups",
+  trader/watchlist.json for trader-news and trader-entry. Also scans London
+  (LSE, .L) and Frankfurt (Xetra, .DE) from bundled starter lists, on their
+  own clocks. Free Yahoo data, bar by bar. Use when the user says "scan the
+  market", "scan London", "scan Frankfurt", "FTSE or DAX breakouts", "find me setups",
   "what is breaking out", "opening range breakouts", "scan for bull flags",
   "oversold stocks", "pre-market scan", "build my watchlist", "what should I
   look at today", or at the start of a trading day before /trader-news.
-argument-hint: "[universe | daily | orb] [--at HH:MM]"
+argument-hint: "[universe | daily | orb] [--market us|london|frankfurt] [--at HH:MM]"
 ---
 
 # trader-scanner
@@ -98,6 +100,33 @@ lows:
 A closing-high breakout fires more often than an intraday-high one (KO on
 Oct 16 broke its 20-day closing high, not its 20-day intraday high). Hits are
 listed most traded first (price times volume).
+
+## London and Frankfurt
+
+A ticker's suffix picks the market: `VOD.L` is the London Stock Exchange (08:00 to 16:30 London time, prices in pence), `SAP.DE` is Xetra in Frankfurt (09:00 to 17:30 Frankfurt time, prices in euros), anything else is New York. Each market uses its own clock, holidays (2026 and 2027) and wording. Yahoo's free London and Xetra bars run about 15 minutes behind.
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scan.py" universe --market london     # copies the bundled 100-stock list
+python3 "${CLAUDE_SKILL_DIR}/scan.py" orb --market london          # after 8:20 AM London time
+python3 "${CLAUDE_SKILL_DIR}/scan.py" daily --market frankfurt     # 42 Xetra stocks, before 9:00
+python3 "${CLAUDE_SKILL_DIR}/scan.py" orb --symbols VOD,BP --market london   # VOD -> VOD.L
+```
+
+- There is no free directory like Nasdaq Trader's abroad, so the lists ship
+  with the skill: `universe-london.txt` (100 stocks) and
+  `universe-frankfurt.txt` (42). They are starter lists of large, liquid
+  names checked on Yahoo on 2026-11-10: not the whole exchange and not an
+  official index. Say so when you report a scan.
+- A live orb scan cuts the clock about 15 minutes back to the bars Yahoo has,
+  and prints that line. Repeat it to the user.
+- Yahoo's European 5-minute bars skip a slot here and there, even for the
+  biggest stocks. Abroad a chart is usable when its opening range is whole
+  and at most 1 in 5 later bars is missing (New York still needs every bar).
+- Floors are in the market's currency: London `--min-price` is in pence
+  (default 0), Frankfurt in euros (default 1); `--min-volume` defaults to
+  100,000 shares for the daily scan.
+- One market per scan. The hits keep their suffix, so `/trader-entry` and
+  the rest know the market.
 
 ## The opening-range breakout scan (during the session)
 

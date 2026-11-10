@@ -89,6 +89,14 @@ in and out before the close. No new 8-K." At 10:52 the price line reads
 `TSLA 366.48 +3.31% vs yesterday's close 354.72 at 10:52 ET  MOVING`. When a
 ticker has no news, say so rather than padding the brief.
 
+## London and Frankfurt
+
+`.L` (London) and `.DE` (Frankfurt) tickers get Yahoo headlines and the
+move from yesterday's close. The SEC has no filings for them: London
+companies announce through the RNS and German ones through the
+Bundesanzeiger, which this tool does not read. Say so instead of saying
+"no filings".
+
 ## What it never does
 
 - Never invents or embellishes a story, a quote or a number.

@@ -323,8 +323,25 @@ def risk_verdict(risk, fp, today):
     return None, "this exact order was not in the last risk check (it changed or is new); run check.py again"
 
 
-def status_of(order, risk, state, today):
+ABROAD = {".L": "the London Stock Exchange", ".DE": "Xetra (Frankfurt)"}
+
+
+def abroad(symbol):
+    """VOD.L -> 'the London Stock Exchange', SAP.DE -> 'Xetra (Frankfurt)', TSLA -> None."""
+    s = str(symbol or "").upper()
+    for suffix, name in ABROAD.items():
+        if s.endswith(suffix) and len(s) > len(suffix):
+            return name
+    return None
+
+
+def status_of(order, risk, state, today, cfg=None):
     """(ready, label, risk_result)"""
+    where = abroad(order.get("symbol"))
+    if where and str((cfg or {}).get("broker", "alpaca")).lower() != "ibkr":
+        return False, ("NOT FOR ALPACA: Alpaca trades US stocks only and %s is on %s. Place it yourself at a "
+                       "broker that reaches that exchange (Interactive Brokers does: \"broker\": \"ibkr\")"
+                       % (str(order.get("symbol")).upper(), where)), None
     fp = fingerprint(order)
     rv, why = risk_verdict(risk, fp, today)
     if rv is None:
@@ -350,7 +367,7 @@ def kind_of(order, rv):
 # ---------------------------------------------------------------- rendering
 
 def render(order, idx, total, cfg, risk, state, today):
-    ready, label, rv = status_of(order, risk, state, today)
+    ready, label, rv = status_of(order, risk, state, today, cfg)
     broker = str(cfg.get("broker", "alpaca")).lower()
     paper = cfg.get("paper", True)
     acct = "PAPER account" if paper else "LIVE ACCOUNT, REAL MONEY"
@@ -362,7 +379,9 @@ def render(order, idx, total, cfg, risk, state, today):
     lines.append("  " + label)
     for w in (rv or {}).get("warnings", []):
         lines.append("  note: " + w)
-    if broker == "ibkr":
+    if label.startswith("NOT FOR ALPACA"):
+        pass
+    elif broker == "ibkr":
         lines.append("  Claude drafts this with the Interactive Brokers connector. IBKR sends it to your")
         lines.append("  IBKR account, and it only goes to the market after you approve it there.")
     else:
@@ -380,7 +399,7 @@ def render(order, idx, total, cfg, risk, state, today):
 
 
 def ticket_json(order, idx, cfg, risk, state, today):
-    ready, label, rv = status_of(order, risk, state, today)
+    ready, label, rv = status_of(order, risk, state, today, cfg)
     loss, stop = max_loss(order)
     return {"index": idx, "ready": ready, "status": label, "plain": plain(order),
             "fingerprint": fingerprint(order), "paper": bool(cfg.get("paper", True)),
@@ -500,7 +519,7 @@ def cmd_show(a):
 def cmd_approve(a):
     orders, cfg, risk, state, today, now = _load(a)
     order = _pick(orders, a.index)
-    ready, label, rv = status_of(order, risk, state, today)
+    ready, label, rv = status_of(order, risk, state, today, cfg)
     if not ready:
         raise TicketError("order %d is not ready: %s" % (a.index, label))
     ok, why = parse_yes(a.reply, order, [o.get("symbol", "") for o in orders])

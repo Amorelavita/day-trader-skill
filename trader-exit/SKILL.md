@@ -70,6 +70,15 @@ A level setup has no opening range to lean on, so it needs a stop you name.
   win or lose, no overnight hold. On a 1:00 p.m. early close it moves up to
   12:55. An entry at or after the flat-by time is refused.
 
+## London and Frankfurt
+
+A ticker's suffix picks the market: `VOD.L` is the London Stock Exchange (08:00 to 16:30 London time, prices in pence), `SAP.DE` is Xetra in Frankfurt (09:00 to 17:30 Frankfurt time, prices in euros), anything else is New York. Each market uses its own clock, holidays (2026 and 2027) and wording. Yahoo's free London and Xetra bars run about 15 minutes behind.
+
+Stops and targets are in the market's currency (pence or euros). Flat by
+defaults to 5 minutes before the close: 16:25 in London (12:25 on a 12:30
+half day) and 17:25 in Frankfurt, or the market's `flat_by` under
+`"markets"` in `trader/config.json`. The top-level `flat_by` is New York's.
+
 ## Steps
 
 1. Run it right after `/trader-entry` triggers. Before that, `--entry PRICE`

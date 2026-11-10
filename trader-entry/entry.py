@@ -71,6 +71,28 @@ INTERVALS = {"1m": 60, "5m": 300}
 DEFAULTS = {"no_entries_before": "09:45", "no_entries_after": "15:30"}
 EPOCH = datetime.datetime(1970, 1, 1)
 
+
+
+class EntryError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------- time
+
+PRICES_IN_MARKET_CURRENCY = True   # $ in this tool's output is a share price: shown as p or € abroad
+
+
+# ---------------------------------------------------------------- markets
+# The same block sits in scan.py, entry.py, exit.py, timemachine.py, check.py,
+# alerts.py and size.py: each skill folder stands alone, and tests/test_markets.py
+# keeps the copies equal. A ticker's suffix picks its market: VOD.L is London,
+# SAP.DE is Frankfurt (Xetra), anything else is New York. Every clock time is the
+# market's own local time. Calendars: NYSE from nyse.com (read 2026-10-13); London
+# from the England and Wales bank holidays, with 12:30 half days on Christmas Eve
+# and New Year's Eve; Xetra from Deutsche Boerse's trading calendar. London and
+# Xetra compiled 2026-11-10: check the exchanges' own calendars before relying on them.
+# delay: minutes Yahoo's free bars run behind the market (London and Xetra about 15).
+
 NYSE_HOLIDAYS = {
     "2026-01-01": "New Year's Day",
     "2026-01-19": "Martin Luther King, Jr. Day",
@@ -98,17 +120,140 @@ NYSE_EARLY_CLOSE = {  # 1:00 p.m. ET
     "2026-12-24": "Christmas Eve",
     "2027-11-26": "day after Thanksgiving",
 }
+LSE_HOLIDAYS = {
+    "2026-01-01": "New Year's Day",
+    "2026-04-03": "Good Friday",
+    "2026-04-06": "Easter Monday",
+    "2026-05-04": "Early May bank holiday",
+    "2026-05-25": "Spring bank holiday",
+    "2026-08-31": "Summer bank holiday",
+    "2026-12-25": "Christmas Day",
+    "2026-12-28": "Boxing Day (substitute day)",
+    "2027-01-01": "New Year's Day",
+    "2027-03-26": "Good Friday",
+    "2027-03-29": "Easter Monday",
+    "2027-05-03": "Early May bank holiday",
+    "2027-05-31": "Spring bank holiday",
+    "2027-08-30": "Summer bank holiday",
+    "2027-12-27": "Christmas Day (substitute day)",
+    "2027-12-28": "Boxing Day (substitute day)",
+}
+LSE_EARLY_CLOSE = {  # 12:30 p.m. London
+    "2026-12-24": "Christmas Eve",
+    "2026-12-31": "New Year's Eve",
+    "2027-12-24": "Christmas Eve",
+    "2027-12-31": "New Year's Eve",
+}
+XETRA_HOLIDAYS = {
+    "2026-01-01": "New Year's Day",
+    "2026-04-03": "Good Friday",
+    "2026-04-06": "Easter Monday",
+    "2026-05-01": "Labour Day",
+    "2026-12-24": "Christmas Eve",
+    "2026-12-25": "Christmas Day",
+    "2026-12-31": "New Year's Eve",
+    "2027-01-01": "New Year's Day",
+    "2027-03-26": "Good Friday",
+    "2027-03-29": "Easter Monday",
+    "2027-12-24": "Christmas Eve",
+    "2027-12-31": "New Year's Eve",
+}
+MARKETS = {
+    "us": {"name": "NYSE / Nasdaq", "exchange": "NYSE", "city": "New York", "zone": "ET",
+           "dst": "us", "std": -5, "open": (9, 30), "close": (16, 0), "early": (13, 0),
+           "suffix": "", "delay": 0, "currency": "USD", "fx": None, "per_unit": 1,
+           "holidays": NYSE_HOLIDAYS, "early_closes": NYSE_EARLY_CLOSE},
+    "london": {"name": "London Stock Exchange", "exchange": "LSE", "city": "London", "zone": "London time",
+               "dst": "eu", "std": 0, "open": (8, 0), "close": (16, 30), "early": (12, 30),
+               "suffix": ".L", "delay": 15, "currency": "GBp", "fx": "GBPUSD", "per_unit": 100,
+               "holidays": LSE_HOLIDAYS, "early_closes": LSE_EARLY_CLOSE},
+    "frankfurt": {"name": "Xetra (Frankfurt)", "exchange": "Xetra", "city": "Frankfurt", "zone": "Frankfurt time",
+                  "dst": "eu", "std": 1, "open": (9, 0), "close": (17, 30), "early": None,
+                  "suffix": ".DE", "delay": 15, "currency": "EUR", "fx": "EURUSD", "per_unit": 1,
+                  "holidays": XETRA_HOLIDAYS, "early_closes": {}},
+}
+MARKET_ALIASES = {"ny": "us", "nyse": "us", "nasdaq": "us", "usa": "us", "lse": "london", "uk": "london",
+                  "lon": "london", "xetra": "frankfurt", "fra": "frankfurt", "de": "frankfurt",
+                  "germany": "frankfurt"}
 CALENDAR_YEARS = (2026, 2027)
-OPEN = datetime.time(9, 30)
-CLOSE = datetime.time(16, 0)
-EARLY = datetime.time(13, 0)
+MARKET = "us"
 
 
-class EntryError(Exception):
-    pass
+def market_key(name):
+    """'LSE', 'uk', 'London' -> 'london'. Raises ValueError for anything unknown."""
+    key = str(name or "us").strip().lower()
+    key = MARKET_ALIASES.get(key, key)
+    if key not in MARKETS:
+        raise ValueError("unknown market %r: use us, london or frankfurt" % name)
+    return key
 
 
-# ---------------------------------------------------------------- time
+def market_of(symbol):
+    """The market a ticker trades on, from its Yahoo suffix: VOD.L -> london, SAP.DE -> frankfurt."""
+    s = str(symbol or "").strip().upper()
+    for key, m in MARKETS.items():
+        if m["suffix"] and s.endswith(m["suffix"].upper()) and len(s) > len(m["suffix"]):
+            return key
+    return "us"
+
+
+def use_market(name):
+    """Point the calendar, the clock and the wording at one market. Returns its settings."""
+    global MARKET, OPEN, CLOSE, EARLY, HOLIDAYS, EARLY_CLOSES, OPEN_MIN, CLOSE_MIN, EARLY_MIN, SESSION_BARS
+    MARKET = market_key(name)
+    m = MARKETS[MARKET]
+    OPEN, CLOSE = datetime.time(*m["open"]), datetime.time(*m["close"])
+    EARLY = datetime.time(*m["early"]) if m["early"] else CLOSE
+    HOLIDAYS, EARLY_CLOSES = m["holidays"], m["early_closes"]
+    OPEN_MIN, CLOSE_MIN = OPEN.hour * 60 + OPEN.minute, CLOSE.hour * 60 + CLOSE.minute
+    EARLY_MIN = EARLY.hour * 60 + EARLY.minute
+    SESSION_BARS = (CLOSE_MIN - OPEN_MIN) // 5
+    return m
+
+
+def market_times(cfg=None, key=None):
+    """no_entries_before / no_entries_after / flat_by for a market, as HH:MM local time.
+    New York reads them from the top of trader/config.json. London and Frankfurt default
+    to the same shape (15 minutes after the open, 30 and 5 minutes before the close) and
+    read their own from config["markets"]["london"] (or "frankfurt")."""
+    key = market_key(key or MARKET)
+    cfg = cfg if isinstance(cfg, dict) else {}
+    m = MARKETS[key]
+    o = m["open"][0] * 60 + m["open"][1]
+    c = m["close"][0] * 60 + m["close"][1]
+    out = {"no_entries_before": "%02d:%02d" % divmod(o + 15, 60),
+           "no_entries_after": "%02d:%02d" % divmod(c - 30, 60),
+           "flat_by": "%02d:%02d" % divmod(c - 5, 60)}
+    own = cfg if key == "us" else ((cfg.get("markets") or {}).get(key) or {})
+    for k in out:
+        if k in own:
+            out[k] = own[k]
+    return out
+
+
+def localize(text):
+    """New York wording -> the current market's. A no-op for New York."""
+    if MARKET == "us" or not isinstance(text, str):
+        return text
+    m = MARKETS[MARKET]
+    text = re.sub(r"\bET\b", m["zone"], text)
+    text = text.replace("New York", m["city"]).replace("NYSE", m["exchange"])
+    if globals().get("PRICES_IN_MARKET_CURRENCY"):
+        # this tool prints share prices only, so $ means the market's own currency
+        fmt = {"GBp": r"\1p", "EUR": "\u20ac\\1"}[m["currency"]]
+        text = re.sub(r"\$(\d[\d,]*(?:\.\d+)?)", fmt, text)
+    return text
+
+
+def say(*args, **kw):
+    """print(), in the current market's wording."""
+    print(*(localize(a) for a in args), **kw)
+
+
+def ampm_of(hm_pair):
+    h, mi = hm_pair
+    return "%d:%02d %s" % (h % 12 or 12, mi, "AM" if h < 12 else "PM")
+
 
 def _nth_sunday(year, month, n):
     d = datetime.date(year, month, 1)
@@ -116,27 +261,46 @@ def _nth_sunday(year, month, n):
     return d + datetime.timedelta(weeks=n - 1)
 
 
+def _last_sunday(year, month):
+    d = datetime.date(year + month // 12, month % 12 + 1, 1) - datetime.timedelta(days=1)
+    return d - datetime.timedelta(days=(d.weekday() + 1) % 7)
+
+
 def eastern_offset(utc):
-    """Hours from UTC for New York: -4 in daylight time, -5 otherwise.
-    DST runs from 2:00 a.m. on the second Sunday of March to 2:00 a.m. on the
-    first Sunday of November (US rule since 2007)."""
+    """Hours from UTC for the current market's clock (New York by default).
+    New York: -4 in daylight time, -5 otherwise; DST from 2:00 a.m. on the second
+    Sunday of March to 2:00 a.m. on the first Sunday of November (US rule since 2007).
+    London (0) and Frankfurt (+1): one hour more from 1:00 UTC on the last Sunday of
+    March to 1:00 UTC on the last Sunday of October (EU rule)."""
+    m = MARKETS[MARKET]
     y = utc.year
-    start = datetime.datetime.combine(_nth_sunday(y, 3, 2), datetime.time(7, 0))   # 2:00 EST
-    end = datetime.datetime.combine(_nth_sunday(y, 11, 1), datetime.time(6, 0))    # 2:00 EDT
+    if m["dst"] == "us":
+        start = datetime.datetime.combine(_nth_sunday(y, 3, 2), datetime.time(7, 0))   # 2:00 EST
+        end = datetime.datetime.combine(_nth_sunday(y, 11, 1), datetime.time(6, 0))    # 2:00 EDT
+    else:
+        start = datetime.datetime.combine(_last_sunday(y, 3), datetime.time(1, 0))
+        end = datetime.datetime.combine(_last_sunday(y, 10), datetime.time(1, 0))
     naive = utc.replace(tzinfo=None)
-    return -4 if start <= naive < end else -5
+    return m["std"] + (1 if start <= naive < end else 0)
 
 
 def to_eastern(utc):
+    """UTC -> the current market's local time (New York by default)."""
     return utc.replace(tzinfo=None) + datetime.timedelta(hours=eastern_offset(utc))
 
 
 def eastern_to_utc(local):
-    for off in (-4, -5):
+    """The current market's local time -> UTC."""
+    std = MARKETS[MARKET]["std"]
+    for off in (std + 1, std):
         utc = local - datetime.timedelta(hours=off)
         if eastern_offset(utc) == off:
             return utc
-    return local + datetime.timedelta(hours=5)
+    return local - datetime.timedelta(hours=std)
+
+
+use_market("us")
+# ---------------------------------------------------------------- end of markets
 
 
 def utc_now():
@@ -202,9 +366,9 @@ def trading_day(d):
     """(is_trading_day, reason). Weekends and the NYSE holiday list."""
     if d.weekday() >= 5:
         return False, "weekend"
-    name = NYSE_HOLIDAYS.get(d.isoformat())
+    name = HOLIDAYS.get(d.isoformat())
     if name:
-        return False, "NYSE holiday: " + name
+        return False, MARKETS[MARKET]["exchange"] + " holiday: " + name
     return True, ""
 
 
@@ -213,14 +377,14 @@ def session(d):
     ok, _ = trading_day(d)
     if not ok:
         return None
-    return OPEN, (EARLY if d.isoformat() in NYSE_EARLY_CLOSE else CLOSE)
+    return OPEN, (EARLY if d.isoformat() in EARLY_CLOSES else CLOSE)
 
 
 def next_open(d):
     nd = d + datetime.timedelta(days=1)
     for _ in range(15):
         if session(nd):
-            return "%s 09:30" % nd.isoformat()
+            return "%s %s" % (nd.isoformat(), hm(OPEN))
         nd += datetime.timedelta(days=1)
     return None
 
@@ -228,6 +392,9 @@ def next_open(d):
 # ---------------------------------------------------------------- Yahoo
 
 def yahoo_symbol(sym):
+    """BRK.B -> BRK-B for New York; VOD.L and SAP.DE keep their market suffix."""
+    if market_of(sym) != "us":
+        return sym.upper()
     return sym.upper().replace(".", "-")
 
 
@@ -385,8 +552,20 @@ def read_config(path):
         for k in DEFAULTS:
             if doc.get(k):
                 cfg[k] = doc[k]
+        if isinstance(doc.get("markets"), dict):
+            cfg["markets"] = doc["markets"]
     for k in DEFAULTS:
         parse_hhmm(cfg[k], k)
+    return cfg
+
+
+def market_cfg(cfg):
+    """The entry window for the current market: New York reads the top of the config,
+    London and Frankfurt their own times (config["markets"]), else their defaults."""
+    cfg = dict(cfg or DEFAULTS)
+    if MARKET != "us":
+        t = market_times(cfg)
+        cfg.update(no_entries_before=t["no_entries_before"], no_entries_after=t["no_entries_after"])
     return cfg
 
 
@@ -408,7 +587,8 @@ def early_cutoff(day, t, close_dt):
 def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=None,
              min_volume_x=None, cfg=None):
     """Pure function: the setup's status at now_utc from one session's bars."""
-    cfg = cfg or dict(DEFAULTS)
+    use_market(market_of(chart["symbol"]))
+    cfg = market_cfg(cfg)
     if interval not in INTERVALS:
         raise EntryError("--interval is 5m or 1m")
     step = INTERVALS[interval]
@@ -421,7 +601,7 @@ def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=No
     n_or = or_minutes * 60 // step
     local = to_eastern(now_utc)
     day = local.date()
-    res = {"symbol": chart["symbol"], "setup": setup, "side": "buy", "date": day.isoformat(),
+    res = {"symbol": chart["symbol"], "market": MARKET, "setup": setup, "side": "buy", "date": day.isoformat(),
            "interval": interval, "or_minutes": or_minutes, "now": local.strftime("%Y-%m-%d %H:%M:%S"), "status": "waiting",
            "phase": "", "reason": "", "opening_range": None, "level": None, "trigger": None,
            "last": None, "forming": None, "min_volume_x": min_volume_x,
@@ -440,7 +620,7 @@ def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=No
     before = datetime.datetime.combine(day, parse_hhmm(cfg["no_entries_before"], "no_entries_before"))
     cutoff = early_cutoff(day, parse_hhmm(cfg["no_entries_after"], "no_entries_after"), close_dt)
     or_end = open_dt + datetime.timedelta(minutes=or_minutes)
-    res.update(opens=hm(o), closes=hm(c), early_close=NYSE_EARLY_CLOSE.get(day.isoformat()),
+    res.update(opens=hm(o), closes=hm(c), early_close=EARLY_CLOSES.get(day.isoformat()),
                no_entries_before=hm(before), no_entries_after=hm(cutoff))
 
     by_slot = {}
@@ -475,7 +655,7 @@ def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=No
     res["bars_closed"] = len(bars)
 
     if local < open_dt:
-        res.update(phase="pre-open", reason="the NYSE opens at 9:30%s" % (
+        res.update(phase="pre-open", reason="the NYSE opens at %s%s" % (short(OPEN),
             " and the %d-minute range is set at %s" % (or_minutes, short(or_end)) if setup == "orb" else ""))
         return res
 
@@ -561,7 +741,8 @@ def entry_doc(res, now_utc):
     """trader/entry.json, the contract shape (plus a plain-words reason)."""
     t = res.get("trigger") or {}
     orr = res.get("opening_range")
-    return {"created_by": "trader-entry", "symbol": res["symbol"], "setup": res["setup"], "side": "buy",
+    return {"created_by": "trader-entry", "symbol": res["symbol"], "market": res.get("market", "us"),
+            "setup": res["setup"], "side": "buy",
             "date": res["date"], "status": res["status"], "time": t.get("time"), "bar_start": t.get("bar_start"),
             "bar_index": t.get("bar_index"), "price": t.get("price"), "level": res.get("level"),
             "interval": res["interval"],
@@ -808,17 +989,18 @@ def cmd_check(a):
     cfg = read_config(a.config)
     opts = _opts(a, cfg)
     sym = a.symbol.upper()
+    use_market(market_of(sym))
     chart, now = _load(a, sym, parse_now(a.now) if a.now else None)
     res = evaluate(chart, now, **opts)
     if a.write:
         write_json(a.write, entry_doc(res, now))
     if a.json:
-        print(json.dumps(public(res), indent=2))
+        say(json.dumps(public(res), indent=2))
     else:
         for line in describe(res):
-            print(line)
+            say(line)
         if a.write:
-            print("Wrote %s (status %s)." % (a.write, res["status"]))
+            say("Wrote %s (status %s)." % (a.write, res["status"]))
     return 0 if res["status"] == "triggered" else 1
 
 
@@ -826,6 +1008,7 @@ def cmd_watch(a):
     cfg = read_config(a.config)
     opts = _opts(a, cfg)
     sym = a.symbol.upper()
+    use_market(market_of(sym))
     if a.every <= 0:
         raise EntryError("--every must be above 0 seconds")
     start = parse_now(a.now) if a.now else None
@@ -848,10 +1031,10 @@ def cmd_watch(a):
 
     def on_trigger(res, now):
         write_json(a.out, entry_doc(res, now))
-        print("Wrote %s." % a.out, flush=True)
+        say("Wrote %s." % a.out, flush=True)
 
     def emit(line):
-        print(line, flush=True)
+        say(line, flush=True)
 
     code, _ = watch_loop(provider, now_fn, sleep_fn, emit, opts, every=a.every, until=until,
                          on_trigger=on_trigger)
@@ -873,10 +1056,11 @@ def cmd_watchlist(a):
         raise EntryError("no hits in %s: the scanner found nothing to watch" % a.watchlist)
     if a.offline and not os.path.isdir(a.offline):
         raise EntryError("watchlist --offline wants a folder of <TICKER>.json files")
-    now = parse_now(a.now) if a.now else None
     rows = []
     for i, h in enumerate(hits):
         sym = str(h["symbol"]).upper()
+        use_market(market_of(sym))
+        now = parse_now(a.now) if a.now else None
         o = dict(opts)
         if a.setup == "level" and o["level"] is None:
             o["level"] = h.get("level")
@@ -890,24 +1074,24 @@ def cmd_watchlist(a):
         except EntryError as e:
             rows.append((sym, None, str(e)))
     if a.json:
-        print(json.dumps([{"symbol": s, "result": public(r) if r else None, "error": e} for s, r, e in rows], indent=2))
+        say(json.dumps([{"symbol": s, "result": public(r) if r else None, "error": e} for s, r, e in rows], indent=2))
     else:
-        print("%-6s  %-9s  %-8s  %-8s  %-9s  %-9s  %s" % ("SYMBOL", "STATUS", "TIME", "PRICE", "LEVEL", "LAST", "VS LEVEL"))
+        say("%-6s  %-9s  %-8s  %-8s  %-9s  %-9s  %s" % ("SYMBOL", "STATUS", "TIME", "PRICE", "LEVEL", "LAST", "VS LEVEL"))
         for s, r, e in rows:
             if e:
-                print("%-6s  error: %s" % (s, e))
+                say("%-6s  error: %s" % (s, e))
                 continue
             t = r.get("trigger") or {}
             last = r.get("last") or {}
             status = SHORT.get(r["phase"], r["status"]) if r["status"] != "triggered" else "triggered"
-            print("%-6s  %-9s  %-8s  %-8s  %-9s  %-9s  %s" % (
+            say("%-6s  %-9s  %-8s  %-8s  %-9s  %-9s  %s" % (
                 s, status[:9], t.get("time") or "-", ("$%.2f" % t["price"]) if t else "-",
                 ("$%.2f" % r["level"]) if r.get("level") is not None else "-",
                 ("$%.2f" % last["close"]) if last else "-",
                 ("%+.2f%%" % last["vs_level_pct"]) if last.get("vs_level_pct") is not None else "-"))
         n = sum(1 for _, r, _ in rows if r and r["status"] == "triggered")
-        print("%d of %d triggered. Pick one, then: entry.py check <TICKER> --write, and /trader-exit." % (n, len(rows)))
-        print("Free Yahoo bars, unofficial and can lag. Nothing was placed.")
+        say("%d of %d triggered. Pick one, then: entry.py check <TICKER> --write, and /trader-exit." % (n, len(rows)))
+        say("Free Yahoo bars, unofficial and can lag. Nothing was placed.")
     return 0 if any(r and r["status"] == "triggered" for _, r, _ in rows) else 1
 
 
@@ -949,10 +1133,10 @@ def main(argv=None):
     try:
         return {"check": cmd_check, "watch": cmd_watch, "watchlist": cmd_watchlist}[a.cmd](a)
     except EntryError as e:
-        print("entry.py: %s" % e, file=sys.stderr)
+        say("entry.py: %s" % e, file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("entry.py: stopped.", file=sys.stderr)
+        say("entry.py: stopped.", file=sys.stderr)
         return 1
 
 

@@ -83,9 +83,6 @@ PAUSE = 0.5          # seconds between requests: be polite to free endpoints
 BACKOFF = 5.0        # seconds to wait once after a 429
 HOSTS = ("query2", "query1")
 INTERVAL = 300       # 5-minute bars, in seconds
-SESSION_BARS = 78    # 9:30 to 16:00 in 5-minute bars
-OPEN_MIN = 9 * 60 + 30
-CLOSE_MIN = 16 * 60
 MIN_SESSIONS = 20
 SAMPLE_PATHS = 160
 BAND_PATHS = 2000
@@ -96,12 +93,6 @@ STRONG = 0.15
 MANY_NEITHER = 0.40
 EPOCH = datetime.datetime(1970, 1, 1)
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-NYSE_EARLY_CLOSE = {  # 1:00 p.m. ET, from https://www.nyse.com/markets/hours-calendars (read 2026-10-13)
-    "2026-11-27": "day after Thanksgiving",
-    "2026-12-24": "Christmas Eve",
-    "2027-11-26": "day after Thanksgiving",
-}
-EARLY_MIN = 13 * 60
 
 
 class TMError(Exception):
@@ -110,33 +101,228 @@ class TMError(Exception):
 
 # ---------------------------------------------------------------- time (copied from trader-alerts)
 
+PRICES_IN_MARKET_CURRENCY = True   # $ in this tool's output is a share price: shown as p or € abroad
+
+
+# ---------------------------------------------------------------- markets
+# The same block sits in scan.py, entry.py, exit.py, timemachine.py, check.py,
+# alerts.py and size.py: each skill folder stands alone, and tests/test_markets.py
+# keeps the copies equal. A ticker's suffix picks its market: VOD.L is London,
+# SAP.DE is Frankfurt (Xetra), anything else is New York. Every clock time is the
+# market's own local time. Calendars: NYSE from nyse.com (read 2026-10-13); London
+# from the England and Wales bank holidays, with 12:30 half days on Christmas Eve
+# and New Year's Eve; Xetra from Deutsche Boerse's trading calendar. London and
+# Xetra compiled 2026-11-10: check the exchanges' own calendars before relying on them.
+# delay: minutes Yahoo's free bars run behind the market (London and Xetra about 15).
+
+NYSE_HOLIDAYS = {
+    "2026-01-01": "New Year's Day",
+    "2026-01-19": "Martin Luther King, Jr. Day",
+    "2026-02-16": "Washington's Birthday",
+    "2026-04-03": "Good Friday",
+    "2026-05-25": "Memorial Day",
+    "2026-06-19": "Juneteenth National Independence Day",
+    "2026-07-03": "Independence Day (observed)",
+    "2026-09-07": "Labor Day",
+    "2026-11-26": "Thanksgiving Day",
+    "2026-12-25": "Christmas Day",
+    "2027-01-01": "New Year's Day",
+    "2027-01-18": "Martin Luther King, Jr. Day",
+    "2027-02-15": "Washington's Birthday",
+    "2027-03-26": "Good Friday",
+    "2027-05-31": "Memorial Day",
+    "2027-06-18": "Juneteenth National Independence Day (observed)",
+    "2027-07-05": "Independence Day (observed)",
+    "2027-09-06": "Labor Day",
+    "2027-11-25": "Thanksgiving Day",
+    "2027-12-24": "Christmas Day (observed)",
+}
+NYSE_EARLY_CLOSE = {  # 1:00 p.m. ET
+    "2026-11-27": "day after Thanksgiving",
+    "2026-12-24": "Christmas Eve",
+    "2027-11-26": "day after Thanksgiving",
+}
+LSE_HOLIDAYS = {
+    "2026-01-01": "New Year's Day",
+    "2026-04-03": "Good Friday",
+    "2026-04-06": "Easter Monday",
+    "2026-05-04": "Early May bank holiday",
+    "2026-05-25": "Spring bank holiday",
+    "2026-08-31": "Summer bank holiday",
+    "2026-12-25": "Christmas Day",
+    "2026-12-28": "Boxing Day (substitute day)",
+    "2027-01-01": "New Year's Day",
+    "2027-03-26": "Good Friday",
+    "2027-03-29": "Easter Monday",
+    "2027-05-03": "Early May bank holiday",
+    "2027-05-31": "Spring bank holiday",
+    "2027-08-30": "Summer bank holiday",
+    "2027-12-27": "Christmas Day (substitute day)",
+    "2027-12-28": "Boxing Day (substitute day)",
+}
+LSE_EARLY_CLOSE = {  # 12:30 p.m. London
+    "2026-12-24": "Christmas Eve",
+    "2026-12-31": "New Year's Eve",
+    "2027-12-24": "Christmas Eve",
+    "2027-12-31": "New Year's Eve",
+}
+XETRA_HOLIDAYS = {
+    "2026-01-01": "New Year's Day",
+    "2026-04-03": "Good Friday",
+    "2026-04-06": "Easter Monday",
+    "2026-05-01": "Labour Day",
+    "2026-12-24": "Christmas Eve",
+    "2026-12-25": "Christmas Day",
+    "2026-12-31": "New Year's Eve",
+    "2027-01-01": "New Year's Day",
+    "2027-03-26": "Good Friday",
+    "2027-03-29": "Easter Monday",
+    "2027-12-24": "Christmas Eve",
+    "2027-12-31": "New Year's Eve",
+}
+MARKETS = {
+    "us": {"name": "NYSE / Nasdaq", "exchange": "NYSE", "city": "New York", "zone": "ET",
+           "dst": "us", "std": -5, "open": (9, 30), "close": (16, 0), "early": (13, 0),
+           "suffix": "", "delay": 0, "currency": "USD", "fx": None, "per_unit": 1,
+           "holidays": NYSE_HOLIDAYS, "early_closes": NYSE_EARLY_CLOSE},
+    "london": {"name": "London Stock Exchange", "exchange": "LSE", "city": "London", "zone": "London time",
+               "dst": "eu", "std": 0, "open": (8, 0), "close": (16, 30), "early": (12, 30),
+               "suffix": ".L", "delay": 15, "currency": "GBp", "fx": "GBPUSD", "per_unit": 100,
+               "holidays": LSE_HOLIDAYS, "early_closes": LSE_EARLY_CLOSE},
+    "frankfurt": {"name": "Xetra (Frankfurt)", "exchange": "Xetra", "city": "Frankfurt", "zone": "Frankfurt time",
+                  "dst": "eu", "std": 1, "open": (9, 0), "close": (17, 30), "early": None,
+                  "suffix": ".DE", "delay": 15, "currency": "EUR", "fx": "EURUSD", "per_unit": 1,
+                  "holidays": XETRA_HOLIDAYS, "early_closes": {}},
+}
+MARKET_ALIASES = {"ny": "us", "nyse": "us", "nasdaq": "us", "usa": "us", "lse": "london", "uk": "london",
+                  "lon": "london", "xetra": "frankfurt", "fra": "frankfurt", "de": "frankfurt",
+                  "germany": "frankfurt"}
+CALENDAR_YEARS = (2026, 2027)
+MARKET = "us"
+
+
+def market_key(name):
+    """'LSE', 'uk', 'London' -> 'london'. Raises ValueError for anything unknown."""
+    key = str(name or "us").strip().lower()
+    key = MARKET_ALIASES.get(key, key)
+    if key not in MARKETS:
+        raise ValueError("unknown market %r: use us, london or frankfurt" % name)
+    return key
+
+
+def market_of(symbol):
+    """The market a ticker trades on, from its Yahoo suffix: VOD.L -> london, SAP.DE -> frankfurt."""
+    s = str(symbol or "").strip().upper()
+    for key, m in MARKETS.items():
+        if m["suffix"] and s.endswith(m["suffix"].upper()) and len(s) > len(m["suffix"]):
+            return key
+    return "us"
+
+
+def use_market(name):
+    """Point the calendar, the clock and the wording at one market. Returns its settings."""
+    global MARKET, OPEN, CLOSE, EARLY, HOLIDAYS, EARLY_CLOSES, OPEN_MIN, CLOSE_MIN, EARLY_MIN, SESSION_BARS
+    MARKET = market_key(name)
+    m = MARKETS[MARKET]
+    OPEN, CLOSE = datetime.time(*m["open"]), datetime.time(*m["close"])
+    EARLY = datetime.time(*m["early"]) if m["early"] else CLOSE
+    HOLIDAYS, EARLY_CLOSES = m["holidays"], m["early_closes"]
+    OPEN_MIN, CLOSE_MIN = OPEN.hour * 60 + OPEN.minute, CLOSE.hour * 60 + CLOSE.minute
+    EARLY_MIN = EARLY.hour * 60 + EARLY.minute
+    SESSION_BARS = (CLOSE_MIN - OPEN_MIN) // 5
+    return m
+
+
+def market_times(cfg=None, key=None):
+    """no_entries_before / no_entries_after / flat_by for a market, as HH:MM local time.
+    New York reads them from the top of trader/config.json. London and Frankfurt default
+    to the same shape (15 minutes after the open, 30 and 5 minutes before the close) and
+    read their own from config["markets"]["london"] (or "frankfurt")."""
+    key = market_key(key or MARKET)
+    cfg = cfg if isinstance(cfg, dict) else {}
+    m = MARKETS[key]
+    o = m["open"][0] * 60 + m["open"][1]
+    c = m["close"][0] * 60 + m["close"][1]
+    out = {"no_entries_before": "%02d:%02d" % divmod(o + 15, 60),
+           "no_entries_after": "%02d:%02d" % divmod(c - 30, 60),
+           "flat_by": "%02d:%02d" % divmod(c - 5, 60)}
+    own = cfg if key == "us" else ((cfg.get("markets") or {}).get(key) or {})
+    for k in out:
+        if k in own:
+            out[k] = own[k]
+    return out
+
+
+def localize(text):
+    """New York wording -> the current market's. A no-op for New York."""
+    if MARKET == "us" or not isinstance(text, str):
+        return text
+    m = MARKETS[MARKET]
+    text = re.sub(r"\bET\b", m["zone"], text)
+    text = text.replace("New York", m["city"]).replace("NYSE", m["exchange"])
+    if globals().get("PRICES_IN_MARKET_CURRENCY"):
+        # this tool prints share prices only, so $ means the market's own currency
+        fmt = {"GBp": r"\1p", "EUR": "\u20ac\\1"}[m["currency"]]
+        text = re.sub(r"\$(\d[\d,]*(?:\.\d+)?)", fmt, text)
+    return text
+
+
+def say(*args, **kw):
+    """print(), in the current market's wording."""
+    print(*(localize(a) for a in args), **kw)
+
+
+def ampm_of(hm_pair):
+    h, mi = hm_pair
+    return "%d:%02d %s" % (h % 12 or 12, mi, "AM" if h < 12 else "PM")
+
+
 def _nth_sunday(year, month, n):
     d = datetime.date(year, month, 1)
     d += datetime.timedelta(days=(6 - d.weekday()) % 7)
     return d + datetime.timedelta(weeks=n - 1)
 
 
+def _last_sunday(year, month):
+    d = datetime.date(year + month // 12, month % 12 + 1, 1) - datetime.timedelta(days=1)
+    return d - datetime.timedelta(days=(d.weekday() + 1) % 7)
+
+
 def eastern_offset(utc):
-    """Hours from UTC for New York: -4 in daylight time, -5 otherwise.
-    DST runs from 2:00 a.m. on the second Sunday of March to 2:00 a.m. on the
-    first Sunday of November (US rule since 2007)."""
+    """Hours from UTC for the current market's clock (New York by default).
+    New York: -4 in daylight time, -5 otherwise; DST from 2:00 a.m. on the second
+    Sunday of March to 2:00 a.m. on the first Sunday of November (US rule since 2007).
+    London (0) and Frankfurt (+1): one hour more from 1:00 UTC on the last Sunday of
+    March to 1:00 UTC on the last Sunday of October (EU rule)."""
+    m = MARKETS[MARKET]
     y = utc.year
-    start = datetime.datetime.combine(_nth_sunday(y, 3, 2), datetime.time(7, 0))   # 2:00 EST
-    end = datetime.datetime.combine(_nth_sunday(y, 11, 1), datetime.time(6, 0))    # 2:00 EDT
+    if m["dst"] == "us":
+        start = datetime.datetime.combine(_nth_sunday(y, 3, 2), datetime.time(7, 0))   # 2:00 EST
+        end = datetime.datetime.combine(_nth_sunday(y, 11, 1), datetime.time(6, 0))    # 2:00 EDT
+    else:
+        start = datetime.datetime.combine(_last_sunday(y, 3), datetime.time(1, 0))
+        end = datetime.datetime.combine(_last_sunday(y, 10), datetime.time(1, 0))
     naive = utc.replace(tzinfo=None)
-    return -4 if start <= naive < end else -5
+    return m["std"] + (1 if start <= naive < end else 0)
 
 
 def to_eastern(utc):
+    """UTC -> the current market's local time (New York by default)."""
     return utc.replace(tzinfo=None) + datetime.timedelta(hours=eastern_offset(utc))
 
 
 def eastern_to_utc(local):
-    for off in (-4, -5):
+    """The current market's local time -> UTC."""
+    std = MARKETS[MARKET]["std"]
+    for off in (std + 1, std):
         utc = local - datetime.timedelta(hours=off)
         if eastern_offset(utc) == off:
             return utc
-    return local + datetime.timedelta(hours=5)
+    return local - datetime.timedelta(hours=std)
+
+
+use_market("us")
+# ---------------------------------------------------------------- end of markets
 
 
 def parse_now(text):
@@ -187,7 +373,7 @@ def clock24(minutes):
 
 def chart_url(sym, host="query2"):
     return "https://%s.finance.yahoo.com/v8/finance/chart/%s?range=60d&interval=5m" % (
-        host, urllib.parse.quote(sym.upper().replace(".", "-")))
+        host, urllib.parse.quote(yahoo_symbol(sym)))
 
 
 def _sleep(seconds):
@@ -581,7 +767,7 @@ def normalize_plan(raw, src="flags"):
         raise TMError("opening_range.minutes must be a multiple of 5 (got %s)" % or_min)
     risk = (entry - stop) if long else (stop - entry)
     return {
-        "symbol": sym, "side": side, "date": date, "setup": str(raw.get("setup") or "orb"),
+        "symbol": sym, "market": market_of(sym), "side": side, "date": date, "setup": str(raw.get("setup") or "orb"),
         "entry": entry, "entry_time": clock12(OPEN_MIN + 5 * (k + 1)), "entry_bar": k,
         "stop": stop, "target": target, "risk_per_share": round(risk, 2),
         "target_r": round(((target - entry) if long else (entry - target)) / risk, 2),
@@ -683,10 +869,11 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
     if not 0 <= window <= 10:
         raise TMError("--window must be between 0 and 10 bars")
     sym = plan["symbol"]
+    use_market(market_of(sym))
     result = chart_result(text, sym)
     meta, bars, dropped = parse_bars(result, now_utc)
     msym = str(meta.get("symbol") or "").upper()
-    if msym and msym != sym.replace(".", "-"):
+    if msym and msym != yahoo_symbol(sym):
         raise TMError("the data is for %s but the plan is for %s" % (msym, sym))
     gran = meta.get("dataGranularity")
     if gran and gran != "5m":
@@ -694,7 +881,7 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
     if not bars:
         raise TMError("no complete 5-minute bars for %s in the data" % sym)
     k = plan["entry_bar"]
-    early = plan["date"] in NYSE_EARLY_CLOSE
+    early = plan["date"] in EARLY_CLOSES
     end_min = EARLY_MIN if early else CLOSE_MIN
     until_min = end_min if until is None else parse_clock(until, "--until")
     if (until_min - OPEN_MIN) % 5 or until_min > end_min:
@@ -867,7 +1054,25 @@ def _write(path, doc):
         fh.write("\n")
 
 
+def yahoo_symbol(sym):
+    """BRK.B -> BRK-B for New York; VOD.L and SAP.DE keep their market suffix."""
+    sym = str(sym).upper()
+    return sym if market_of(sym) != "us" else sym.replace(".", "-")
+
+
+def run_symbol(a):
+    """The ticker this run is about (from --symbol or the plan file), for its market's clock."""
+    if a.symbol:
+        return a.symbol
+    try:
+        with open(a.plan, encoding="utf-8") as fh:
+            return str(json.load(fh).get("symbol") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
 def compute(a):
+    use_market(market_of(run_symbol(a)))
     now = parse_now(a.now)
     plan = load_plan(a, now)
     if a.offline:
@@ -883,12 +1088,12 @@ def cmd_run(a):
         _write(a.write, doc)
     if a.json:
         slim = dict(doc, mc={k: v for k, v in doc["mc"].items() if k != "sample_paths"})
-        print(json.dumps(slim, indent=2))
+        say(json.dumps(slim, indent=2))
     else:
-        print("\n".join(report(doc)))
+        say("\n".join(report(doc)))
         if a.write:
-            print("Wrote %s." % a.write)
-        print("Next: /trader-budget sizes it to your budget and your max loss per trade.")
+            say("Wrote %s." % a.write)
+        say("Next: /trader-budget sizes it to your budget and your max loss per trade.")
     return 0
 
 
@@ -902,10 +1107,11 @@ def cmd_chart(a):
             doc["mc"]["bands"]
         except (ValueError, KeyError, TypeError):
             raise TMError("%s is not a time machine result" % a.from_file)
+        use_market(market_of((doc.get("plan") or {}).get("symbol")))
     else:
         doc = compute(a)
-    print("\n".join(render_chart(doc)))
-    print("\n".join([doc.get("verdict", "")] + list(doc.get("verdict_notes") or [])))
+    say("\n".join(render_chart(doc)))
+    say("\n".join([doc.get("verdict", "")] + list(doc.get("verdict_notes") or [])))
     return 0
 
 
@@ -948,7 +1154,7 @@ def main(argv=None):
     try:
         return {"run": cmd_run, "chart": cmd_chart}[a.cmd](a)
     except TMError as e:
-        print("timemachine.py: %s" % e, file=sys.stderr)
+        say("timemachine.py: %s" % e, file=sys.stderr)
         return 1
 
 

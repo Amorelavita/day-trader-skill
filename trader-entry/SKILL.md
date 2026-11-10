@@ -73,6 +73,19 @@ day bar by bar without waiting.
   triggered, expired, or no data. Before 9:30: not open yet. Before 9:45: the
   range is still forming. Weekends and NYSE holidays: the market is closed.
 
+## London and Frankfurt
+
+A ticker's suffix picks the market: `VOD.L` is the London Stock Exchange (08:00 to 16:30 London time, prices in pence), `SAP.DE` is Xetra in Frankfurt (09:00 to 17:30 Frankfurt time, prices in euros), anything else is New York. Each market uses its own clock, holidays (2026 and 2027) and wording. Yahoo's free London and Xetra bars run about 15 minutes behind.
+
+`entry.py check WPP.L` builds the range from 8:00 to 8:15 London time, and
+`check SAP.DE` from 9:00 to 9:15 Frankfurt time. `--now` and `--until` are read
+in the ticker's own market time. The default entry window is 15 minutes after
+the open to 30 minutes before the close (London 08:15 to 16:00, Frankfurt 09:15
+to 17:00); change it in `trader/config.json` under
+`"markets": {"london": {...}}`. Because the bars run about 15 minutes behind, a
+trigger shows up about 15 minutes late: say that it is late, as with any
+trigger more than a bar old.
+
 ## Steps
 
 1. Get the symbol from the user, or run `entry.py watchlist` after

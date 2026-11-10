@@ -101,6 +101,21 @@ Daylight saving time is worked out in the tool, so it needs no time zone
 files and ignores the computer's own zone. For any other year it says the
 holiday list is unknown.
 
+## London and Frankfurt
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/alerts.py" clock --market london        # is the LSE open?
+python3 "${CLAUDE_SKILL_DIR}/alerts.py" quote WPP.L SAP.DE --write   # pence, euros, and today's rates
+python3 "${CLAUDE_SKILL_DIR}/alerts.py" add --opening-bell --market frankfurt
+```
+
+Each rule runs on its ticker's market: a `VOD.L` stop or flat-by alert from
+`add --from-plan` rings on London time (flat by 16:25 by default, moved up on
+the 12:30 half days). `quote` on a `.L` or `.DE` ticker also saves the GBP/USD
+or EUR/USD rate (`fx` in `trader/prices.json`) that trader-budget and
+trader-risk need to keep your limits in dollars. Stooq is New York only here;
+use Yahoo abroad. Yahoo's London and Xetra quotes run about 15 minutes behind.
+
 ## Steps
 
 1. Right after trader-exit writes the plan, run `add --from-plan`. Confirm

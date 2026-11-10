@@ -96,6 +96,16 @@ not in the data (wrong date, not closed yet, a future day), or when the plan
 does not make sense (a stop above a buy's entry, an entry off the 5-minute
 grid). A live in-progress bar is never used.
 
+## London and Frankfurt
+
+A ticker's suffix picks the market: `VOD.L` is the London Stock Exchange (08:00 to 16:30 London time, prices in pence), `SAP.DE` is Xetra in Frankfurt (09:00 to 17:30 Frankfurt time, prices in euros), anything else is New York. Each market uses its own clock, holidays (2026 and 2027) and wording. Yahoo's free London and Xetra bars run about 15 minutes behind.
+
+A London or Xetra session is 102 five-minute bars (8.5 hours), so a full
+session needs all 102. Yahoo's European bars have small gaps, so expect
+fewer full sessions than in New York (WPP.L had 32 of 59 on 2026-11-10); the
+tool lists the ones it left out, and refuses under 20. Say how many sessions
+it used. `--until` is in the market's time (`--until 16:25` for London).
+
 ## Steps
 
 1. Make sure `trader/plan.json` is today's plan from `/trader-exit`. If there

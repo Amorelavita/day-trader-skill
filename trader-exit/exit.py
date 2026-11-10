@@ -61,6 +61,28 @@ CENT = Decimal("0.01")
 EPOCH = datetime.datetime(1970, 1, 1)
 NOTE = "A stop is a plan, not a guarantee: a gap or a fast market can fill past it."
 
+
+
+class PlanError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------- time
+
+PRICES_IN_MARKET_CURRENCY = True   # $ in this tool's output is a share price: shown as p or € abroad
+
+
+# ---------------------------------------------------------------- markets
+# The same block sits in scan.py, entry.py, exit.py, timemachine.py, check.py,
+# alerts.py and size.py: each skill folder stands alone, and tests/test_markets.py
+# keeps the copies equal. A ticker's suffix picks its market: VOD.L is London,
+# SAP.DE is Frankfurt (Xetra), anything else is New York. Every clock time is the
+# market's own local time. Calendars: NYSE from nyse.com (read 2026-10-13); London
+# from the England and Wales bank holidays, with 12:30 half days on Christmas Eve
+# and New Year's Eve; Xetra from Deutsche Boerse's trading calendar. London and
+# Xetra compiled 2026-11-10: check the exchanges' own calendars before relying on them.
+# delay: minutes Yahoo's free bars run behind the market (London and Xetra about 15).
+
 NYSE_HOLIDAYS = {
     "2026-01-01": "New Year's Day",
     "2026-01-19": "Martin Luther King, Jr. Day",
@@ -88,16 +110,140 @@ NYSE_EARLY_CLOSE = {  # 1:00 p.m. ET
     "2026-12-24": "Christmas Eve",
     "2027-11-26": "day after Thanksgiving",
 }
-OPEN = datetime.time(9, 30)
-CLOSE = datetime.time(16, 0)
-EARLY = datetime.time(13, 0)
+LSE_HOLIDAYS = {
+    "2026-01-01": "New Year's Day",
+    "2026-04-03": "Good Friday",
+    "2026-04-06": "Easter Monday",
+    "2026-05-04": "Early May bank holiday",
+    "2026-05-25": "Spring bank holiday",
+    "2026-08-31": "Summer bank holiday",
+    "2026-12-25": "Christmas Day",
+    "2026-12-28": "Boxing Day (substitute day)",
+    "2027-01-01": "New Year's Day",
+    "2027-03-26": "Good Friday",
+    "2027-03-29": "Easter Monday",
+    "2027-05-03": "Early May bank holiday",
+    "2027-05-31": "Spring bank holiday",
+    "2027-08-30": "Summer bank holiday",
+    "2027-12-27": "Christmas Day (substitute day)",
+    "2027-12-28": "Boxing Day (substitute day)",
+}
+LSE_EARLY_CLOSE = {  # 12:30 p.m. London
+    "2026-12-24": "Christmas Eve",
+    "2026-12-31": "New Year's Eve",
+    "2027-12-24": "Christmas Eve",
+    "2027-12-31": "New Year's Eve",
+}
+XETRA_HOLIDAYS = {
+    "2026-01-01": "New Year's Day",
+    "2026-04-03": "Good Friday",
+    "2026-04-06": "Easter Monday",
+    "2026-05-01": "Labour Day",
+    "2026-12-24": "Christmas Eve",
+    "2026-12-25": "Christmas Day",
+    "2026-12-31": "New Year's Eve",
+    "2027-01-01": "New Year's Day",
+    "2027-03-26": "Good Friday",
+    "2027-03-29": "Easter Monday",
+    "2027-12-24": "Christmas Eve",
+    "2027-12-31": "New Year's Eve",
+}
+MARKETS = {
+    "us": {"name": "NYSE / Nasdaq", "exchange": "NYSE", "city": "New York", "zone": "ET",
+           "dst": "us", "std": -5, "open": (9, 30), "close": (16, 0), "early": (13, 0),
+           "suffix": "", "delay": 0, "currency": "USD", "fx": None, "per_unit": 1,
+           "holidays": NYSE_HOLIDAYS, "early_closes": NYSE_EARLY_CLOSE},
+    "london": {"name": "London Stock Exchange", "exchange": "LSE", "city": "London", "zone": "London time",
+               "dst": "eu", "std": 0, "open": (8, 0), "close": (16, 30), "early": (12, 30),
+               "suffix": ".L", "delay": 15, "currency": "GBp", "fx": "GBPUSD", "per_unit": 100,
+               "holidays": LSE_HOLIDAYS, "early_closes": LSE_EARLY_CLOSE},
+    "frankfurt": {"name": "Xetra (Frankfurt)", "exchange": "Xetra", "city": "Frankfurt", "zone": "Frankfurt time",
+                  "dst": "eu", "std": 1, "open": (9, 0), "close": (17, 30), "early": None,
+                  "suffix": ".DE", "delay": 15, "currency": "EUR", "fx": "EURUSD", "per_unit": 1,
+                  "holidays": XETRA_HOLIDAYS, "early_closes": {}},
+}
+MARKET_ALIASES = {"ny": "us", "nyse": "us", "nasdaq": "us", "usa": "us", "lse": "london", "uk": "london",
+                  "lon": "london", "xetra": "frankfurt", "fra": "frankfurt", "de": "frankfurt",
+                  "germany": "frankfurt"}
+CALENDAR_YEARS = (2026, 2027)
+MARKET = "us"
 
 
-class PlanError(Exception):
-    pass
+def market_key(name):
+    """'LSE', 'uk', 'London' -> 'london'. Raises ValueError for anything unknown."""
+    key = str(name or "us").strip().lower()
+    key = MARKET_ALIASES.get(key, key)
+    if key not in MARKETS:
+        raise ValueError("unknown market %r: use us, london or frankfurt" % name)
+    return key
 
 
-# ---------------------------------------------------------------- time
+def market_of(symbol):
+    """The market a ticker trades on, from its Yahoo suffix: VOD.L -> london, SAP.DE -> frankfurt."""
+    s = str(symbol or "").strip().upper()
+    for key, m in MARKETS.items():
+        if m["suffix"] and s.endswith(m["suffix"].upper()) and len(s) > len(m["suffix"]):
+            return key
+    return "us"
+
+
+def use_market(name):
+    """Point the calendar, the clock and the wording at one market. Returns its settings."""
+    global MARKET, OPEN, CLOSE, EARLY, HOLIDAYS, EARLY_CLOSES, OPEN_MIN, CLOSE_MIN, EARLY_MIN, SESSION_BARS
+    MARKET = market_key(name)
+    m = MARKETS[MARKET]
+    OPEN, CLOSE = datetime.time(*m["open"]), datetime.time(*m["close"])
+    EARLY = datetime.time(*m["early"]) if m["early"] else CLOSE
+    HOLIDAYS, EARLY_CLOSES = m["holidays"], m["early_closes"]
+    OPEN_MIN, CLOSE_MIN = OPEN.hour * 60 + OPEN.minute, CLOSE.hour * 60 + CLOSE.minute
+    EARLY_MIN = EARLY.hour * 60 + EARLY.minute
+    SESSION_BARS = (CLOSE_MIN - OPEN_MIN) // 5
+    return m
+
+
+def market_times(cfg=None, key=None):
+    """no_entries_before / no_entries_after / flat_by for a market, as HH:MM local time.
+    New York reads them from the top of trader/config.json. London and Frankfurt default
+    to the same shape (15 minutes after the open, 30 and 5 minutes before the close) and
+    read their own from config["markets"]["london"] (or "frankfurt")."""
+    key = market_key(key or MARKET)
+    cfg = cfg if isinstance(cfg, dict) else {}
+    m = MARKETS[key]
+    o = m["open"][0] * 60 + m["open"][1]
+    c = m["close"][0] * 60 + m["close"][1]
+    out = {"no_entries_before": "%02d:%02d" % divmod(o + 15, 60),
+           "no_entries_after": "%02d:%02d" % divmod(c - 30, 60),
+           "flat_by": "%02d:%02d" % divmod(c - 5, 60)}
+    own = cfg if key == "us" else ((cfg.get("markets") or {}).get(key) or {})
+    for k in out:
+        if k in own:
+            out[k] = own[k]
+    return out
+
+
+def localize(text):
+    """New York wording -> the current market's. A no-op for New York."""
+    if MARKET == "us" or not isinstance(text, str):
+        return text
+    m = MARKETS[MARKET]
+    text = re.sub(r"\bET\b", m["zone"], text)
+    text = text.replace("New York", m["city"]).replace("NYSE", m["exchange"])
+    if globals().get("PRICES_IN_MARKET_CURRENCY"):
+        # this tool prints share prices only, so $ means the market's own currency
+        fmt = {"GBp": r"\1p", "EUR": "\u20ac\\1"}[m["currency"]]
+        text = re.sub(r"\$(\d[\d,]*(?:\.\d+)?)", fmt, text)
+    return text
+
+
+def say(*args, **kw):
+    """print(), in the current market's wording."""
+    print(*(localize(a) for a in args), **kw)
+
+
+def ampm_of(hm_pair):
+    h, mi = hm_pair
+    return "%d:%02d %s" % (h % 12 or 12, mi, "AM" if h < 12 else "PM")
+
 
 def _nth_sunday(year, month, n):
     d = datetime.date(year, month, 1)
@@ -105,25 +251,46 @@ def _nth_sunday(year, month, n):
     return d + datetime.timedelta(weeks=n - 1)
 
 
+def _last_sunday(year, month):
+    d = datetime.date(year + month // 12, month % 12 + 1, 1) - datetime.timedelta(days=1)
+    return d - datetime.timedelta(days=(d.weekday() + 1) % 7)
+
+
 def eastern_offset(utc):
-    """Hours from UTC for New York: -4 in daylight time, -5 otherwise (US rule since 2007)."""
+    """Hours from UTC for the current market's clock (New York by default).
+    New York: -4 in daylight time, -5 otherwise; DST from 2:00 a.m. on the second
+    Sunday of March to 2:00 a.m. on the first Sunday of November (US rule since 2007).
+    London (0) and Frankfurt (+1): one hour more from 1:00 UTC on the last Sunday of
+    March to 1:00 UTC on the last Sunday of October (EU rule)."""
+    m = MARKETS[MARKET]
     y = utc.year
-    start = datetime.datetime.combine(_nth_sunday(y, 3, 2), datetime.time(7, 0))   # 2:00 EST
-    end = datetime.datetime.combine(_nth_sunday(y, 11, 1), datetime.time(6, 0))    # 2:00 EDT
+    if m["dst"] == "us":
+        start = datetime.datetime.combine(_nth_sunday(y, 3, 2), datetime.time(7, 0))   # 2:00 EST
+        end = datetime.datetime.combine(_nth_sunday(y, 11, 1), datetime.time(6, 0))    # 2:00 EDT
+    else:
+        start = datetime.datetime.combine(_last_sunday(y, 3), datetime.time(1, 0))
+        end = datetime.datetime.combine(_last_sunday(y, 10), datetime.time(1, 0))
     naive = utc.replace(tzinfo=None)
-    return -4 if start <= naive < end else -5
+    return m["std"] + (1 if start <= naive < end else 0)
 
 
 def to_eastern(utc):
+    """UTC -> the current market's local time (New York by default)."""
     return utc.replace(tzinfo=None) + datetime.timedelta(hours=eastern_offset(utc))
 
 
 def eastern_to_utc(local):
-    for off in (-4, -5):
+    """The current market's local time -> UTC."""
+    std = MARKETS[MARKET]["std"]
+    for off in (std + 1, std):
         utc = local - datetime.timedelta(hours=off)
         if eastern_offset(utc) == off:
             return utc
-    return local + datetime.timedelta(hours=5)
+    return local - datetime.timedelta(hours=std)
+
+
+use_market("us")
+# ---------------------------------------------------------------- end of markets
 
 
 def utc_now():
@@ -186,9 +353,9 @@ def ampm(t):
 
 def session(d):
     """(open_time, close_time) in New York time, or None if closed all day."""
-    if d.weekday() >= 5 or d.isoformat() in NYSE_HOLIDAYS:
+    if d.weekday() >= 5 or d.isoformat() in HOLIDAYS:
         return None
-    return OPEN, (EARLY if d.isoformat() in NYSE_EARLY_CLOSE else CLOSE)
+    return OPEN, (EARLY if d.isoformat() in EARLY_CLOSES else CLOSE)
 
 
 # ---------------------------------------------------------------- money math (Decimal, to the cent)
@@ -391,7 +558,7 @@ def read_text(path):
 
 
 def load_chart(sym, interval, day, offline=None):
-    ysym = sym.upper().replace(".", "-")
+    ysym = sym.upper() if market_of(sym) != "us" else sym.upper().replace(".", "-")
     if offline:
         path = offline
         if os.path.isdir(offline):
@@ -499,6 +666,10 @@ def read_config(path):
         for k in DEFAULTS:
             if doc.get(k) is not None:
                 cfg[k] = doc[k]
+        if isinstance(doc.get("markets"), dict):
+            cfg["markets"] = doc["markets"]
+    if MARKET != "us":
+        cfg["flat_by"] = market_times(cfg)["flat_by"]
     return cfg
 
 
@@ -517,7 +688,8 @@ def resolve_flat_by(day, explicit, cfg, entry_time):
             if moved.time() <= OPEN:
                 raise PlanError("flat_by %s in the config is at or after the close" % hm(t))
             t = moved.time()
-            note = "moved up for the 1:00 p.m. early close (%s)" % NYSE_EARLY_CLOSE.get(day.isoformat(), "")
+            note = "moved up for the %s early close (%s)" % ("1:00 p.m." if MARKET == "us" else ampm(s[1]),
+                                                              EARLY_CLOSES.get(day.isoformat(), ""))
     if entry_time and entry_time >= t:
         raise PlanError("the entry at %s is at or after your flat-by %s: there is no time left to hold it"
                         % (ampm(entry_time), hm(t)))
@@ -597,7 +769,8 @@ def build_plan(a, now_utc):
     if info["or_high"] is not None and info["or_low"] is not None:
         orr = {"high": float(cents(info["or_high"])), "low": float(cents(info["or_low"])),
                "minutes": int(info["or_minutes"] or 15)}
-    plan = {"created_by": "trader-exit", "symbol": info["symbol"], "side": "buy", "date": day.isoformat(),
+    plan = {"created_by": "trader-exit", "symbol": info["symbol"], "market": MARKET, "side": "buy",
+            "date": day.isoformat(),
             "setup": info["setup"], "entry": float(c["entry"]),
             "entry_time": ampm(entry_time) if entry_time else None,
             "entry_bar": info["entry_bar"], "interval": info["interval"], "opening_range": orr,
@@ -649,7 +822,21 @@ def describe(plan):
     return out
 
 
+def plan_symbol(a):
+    """The ticker this run is about (from --symbol or the entry file), for its market's clock."""
+    if a.symbol:
+        return a.symbol
+    path = a.from_path or "trader/entry.json"
+    if os.path.exists(path):
+        try:
+            return str(read_json(path, "entry").get("symbol") or "")
+        except (PlanError, AttributeError):
+            return ""
+    return ""
+
+
 def cmd_plan(a):
+    use_market(market_of(plan_symbol(a)))
     now = parse_now(a.now)
     plan, warnings = build_plan(a, now)
     if a.write:
@@ -660,34 +847,35 @@ def cmd_plan(a):
             json.dump(plan, fh, indent=2)
             fh.write("\n")
     if a.json:
-        print(json.dumps(dict(plan, warnings=warnings), indent=2))
+        say(json.dumps(dict(plan, warnings=warnings), indent=2))
         return 0
     for line in describe(plan):
-        print(line)
+        say(line)
     for w in warnings:
-        print("Note: " + w)
+        say("Note: " + w)
     if a.write:
-        print("Wrote %s." % a.write)
-    print("Next: /trader-timemachine replays it, then /trader-budget sizes it to your max loss. Nothing was placed.")
+        say("Wrote %s." % a.write)
+    say("Next: /trader-timemachine replays it, then /trader-budget sizes it to your max loss. Nothing was placed.")
     return 0
 
 
 def cmd_show(a):
     if not os.path.exists(a.plan):
-        print("No plan at %s yet. Make one: exit.py plan --write" % a.plan)
+        say("No plan at %s yet. Make one: exit.py plan --write" % a.plan)
         return 1
     plan = read_json(a.plan, "plan")
     for k in ("symbol", "date", "entry", "stop", "target", "risk_per_share", "reward_risk", "flat_by"):
         if plan.get(k) is None:
             raise PlanError("%s is missing %r: make a new plan with exit.py plan --write" % (a.plan, k))
     if a.json:
-        print(json.dumps(plan, indent=2))
+        say(json.dumps(plan, indent=2))
         return 0
+    use_market(market_of(plan["symbol"]))
     for line in describe(dict({"setup": "orb", "interval": "5m", "stop_label": "", "target_label": ""}, **plan)):
-        print(line)
+        say(line)
     today = to_eastern(parse_now(a.now)).date().isoformat()
     if plan["date"] != today:
-        print("Note: this plan is for %s, not today (%s)." % (plan["date"], today))
+        say("Note: this plan is for %s, not today (%s)." % (plan["date"], today))
     return 0
 
 
@@ -727,7 +915,7 @@ def main(argv=None):
     try:
         return {"plan": cmd_plan, "show": cmd_show}[a.cmd](a)
     except PlanError as e:
-        print("exit.py: %s" % e, file=sys.stderr)
+        say("exit.py: %s" % e, file=sys.stderr)
         return 1
 
 

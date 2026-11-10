@@ -102,6 +102,18 @@ Warnings do not block, but say them to the user: a LIVE account, a number
 sent as a number instead of a string, a stop that lives only in the plan and
 not at the broker, a price too old to use, an early close today.
 
+## London and Frankfurt
+
+Orders for London (`.L`) and Frankfurt (`.DE`) tickers are checked on
+their own market's clock: the entry window, the holidays and the half days
+are London's or Xetra's, and the default window is 15 minutes after the open
+to 30 minutes before the close (or `"markets"` in `trader/config.json`).
+Prices are in pence or euros; the tool converts them to dollars with the rate
+in `trader/prices.json` (`fx`, saved by `alerts.py quote <TICKER> --write`)
+before it checks any dollar limit. No rate is a BLOCK. A rate older than 24
+hours is a warning. A London or Xetra quote counts as fresh for 30 minutes,
+not 15, because Yahoo's free quotes there run about 15 minutes behind.
+
 ## Steps
 
 1. If the price may have moved since the plan, refresh it first

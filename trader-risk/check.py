@@ -85,11 +85,32 @@ TYPES = {"market", "limit", "stop", "stop_limit", "trailing_stop"}
 TIFS = {"day", "gtc", "opg", "cls", "ioc", "fok"}
 OCC = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
 TICKER = re.compile(r"^[A-Z]{1,5}([.\-][A-Z]{1,2})?$")
+ABROAD = re.compile(r"^[A-Z0-9]{1,6}(-[A-Z])?\.(L|DE)$")   # London (VOD.L, BT-A.L) and Xetra (SAP.DE, 1COV.DE)
+FX_HOURS = 24        # an exchange rate older than this gets a warning
 HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 CENT = 0.005
 FRESH_MINUTES = 15
 REF_WORDS = {"plan": "the plan's entry", "price": "the latest price", "limit": "the limit price",
              "stop price": "the stop price", "stale price": "an old price"}
+
+
+
+class RiskError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------- time (New York, no tz files)
+
+# ---------------------------------------------------------------- markets
+# The same block sits in scan.py, entry.py, exit.py, timemachine.py, check.py,
+# alerts.py and size.py: each skill folder stands alone, and tests/test_markets.py
+# keeps the copies equal. A ticker's suffix picks its market: VOD.L is London,
+# SAP.DE is Frankfurt (Xetra), anything else is New York. Every clock time is the
+# market's own local time. Calendars: NYSE from nyse.com (read 2026-10-13); London
+# from the England and Wales bank holidays, with 12:30 half days on Christmas Eve
+# and New Year's Eve; Xetra from Deutsche Boerse's trading calendar. London and
+# Xetra compiled 2026-11-10: check the exchanges' own calendars before relying on them.
+# delay: minutes Yahoo's free bars run behind the market (London and Xetra about 15).
 
 NYSE_HOLIDAYS = {
     "2026-01-01": "New Year's Day",
@@ -118,17 +139,140 @@ NYSE_EARLY_CLOSE = {  # 1:00 p.m. ET
     "2026-12-24": "Christmas Eve",
     "2027-11-26": "day after Thanksgiving",
 }
+LSE_HOLIDAYS = {
+    "2026-01-01": "New Year's Day",
+    "2026-04-03": "Good Friday",
+    "2026-04-06": "Easter Monday",
+    "2026-05-04": "Early May bank holiday",
+    "2026-05-25": "Spring bank holiday",
+    "2026-08-31": "Summer bank holiday",
+    "2026-12-25": "Christmas Day",
+    "2026-12-28": "Boxing Day (substitute day)",
+    "2027-01-01": "New Year's Day",
+    "2027-03-26": "Good Friday",
+    "2027-03-29": "Easter Monday",
+    "2027-05-03": "Early May bank holiday",
+    "2027-05-31": "Spring bank holiday",
+    "2027-08-30": "Summer bank holiday",
+    "2027-12-27": "Christmas Day (substitute day)",
+    "2027-12-28": "Boxing Day (substitute day)",
+}
+LSE_EARLY_CLOSE = {  # 12:30 p.m. London
+    "2026-12-24": "Christmas Eve",
+    "2026-12-31": "New Year's Eve",
+    "2027-12-24": "Christmas Eve",
+    "2027-12-31": "New Year's Eve",
+}
+XETRA_HOLIDAYS = {
+    "2026-01-01": "New Year's Day",
+    "2026-04-03": "Good Friday",
+    "2026-04-06": "Easter Monday",
+    "2026-05-01": "Labour Day",
+    "2026-12-24": "Christmas Eve",
+    "2026-12-25": "Christmas Day",
+    "2026-12-31": "New Year's Eve",
+    "2027-01-01": "New Year's Day",
+    "2027-03-26": "Good Friday",
+    "2027-03-29": "Easter Monday",
+    "2027-12-24": "Christmas Eve",
+    "2027-12-31": "New Year's Eve",
+}
+MARKETS = {
+    "us": {"name": "NYSE / Nasdaq", "exchange": "NYSE", "city": "New York", "zone": "ET",
+           "dst": "us", "std": -5, "open": (9, 30), "close": (16, 0), "early": (13, 0),
+           "suffix": "", "delay": 0, "currency": "USD", "fx": None, "per_unit": 1,
+           "holidays": NYSE_HOLIDAYS, "early_closes": NYSE_EARLY_CLOSE},
+    "london": {"name": "London Stock Exchange", "exchange": "LSE", "city": "London", "zone": "London time",
+               "dst": "eu", "std": 0, "open": (8, 0), "close": (16, 30), "early": (12, 30),
+               "suffix": ".L", "delay": 15, "currency": "GBp", "fx": "GBPUSD", "per_unit": 100,
+               "holidays": LSE_HOLIDAYS, "early_closes": LSE_EARLY_CLOSE},
+    "frankfurt": {"name": "Xetra (Frankfurt)", "exchange": "Xetra", "city": "Frankfurt", "zone": "Frankfurt time",
+                  "dst": "eu", "std": 1, "open": (9, 0), "close": (17, 30), "early": None,
+                  "suffix": ".DE", "delay": 15, "currency": "EUR", "fx": "EURUSD", "per_unit": 1,
+                  "holidays": XETRA_HOLIDAYS, "early_closes": {}},
+}
+MARKET_ALIASES = {"ny": "us", "nyse": "us", "nasdaq": "us", "usa": "us", "lse": "london", "uk": "london",
+                  "lon": "london", "xetra": "frankfurt", "fra": "frankfurt", "de": "frankfurt",
+                  "germany": "frankfurt"}
 CALENDAR_YEARS = (2026, 2027)
-OPEN = datetime.time(9, 30)
-CLOSE = datetime.time(16, 0)
-EARLY = datetime.time(13, 0)
+MARKET = "us"
 
 
-class RiskError(Exception):
-    pass
+def market_key(name):
+    """'LSE', 'uk', 'London' -> 'london'. Raises ValueError for anything unknown."""
+    key = str(name or "us").strip().lower()
+    key = MARKET_ALIASES.get(key, key)
+    if key not in MARKETS:
+        raise ValueError("unknown market %r: use us, london or frankfurt" % name)
+    return key
 
 
-# ---------------------------------------------------------------- time (New York, no tz files)
+def market_of(symbol):
+    """The market a ticker trades on, from its Yahoo suffix: VOD.L -> london, SAP.DE -> frankfurt."""
+    s = str(symbol or "").strip().upper()
+    for key, m in MARKETS.items():
+        if m["suffix"] and s.endswith(m["suffix"].upper()) and len(s) > len(m["suffix"]):
+            return key
+    return "us"
+
+
+def use_market(name):
+    """Point the calendar, the clock and the wording at one market. Returns its settings."""
+    global MARKET, OPEN, CLOSE, EARLY, HOLIDAYS, EARLY_CLOSES, OPEN_MIN, CLOSE_MIN, EARLY_MIN, SESSION_BARS
+    MARKET = market_key(name)
+    m = MARKETS[MARKET]
+    OPEN, CLOSE = datetime.time(*m["open"]), datetime.time(*m["close"])
+    EARLY = datetime.time(*m["early"]) if m["early"] else CLOSE
+    HOLIDAYS, EARLY_CLOSES = m["holidays"], m["early_closes"]
+    OPEN_MIN, CLOSE_MIN = OPEN.hour * 60 + OPEN.minute, CLOSE.hour * 60 + CLOSE.minute
+    EARLY_MIN = EARLY.hour * 60 + EARLY.minute
+    SESSION_BARS = (CLOSE_MIN - OPEN_MIN) // 5
+    return m
+
+
+def market_times(cfg=None, key=None):
+    """no_entries_before / no_entries_after / flat_by for a market, as HH:MM local time.
+    New York reads them from the top of trader/config.json. London and Frankfurt default
+    to the same shape (15 minutes after the open, 30 and 5 minutes before the close) and
+    read their own from config["markets"]["london"] (or "frankfurt")."""
+    key = market_key(key or MARKET)
+    cfg = cfg if isinstance(cfg, dict) else {}
+    m = MARKETS[key]
+    o = m["open"][0] * 60 + m["open"][1]
+    c = m["close"][0] * 60 + m["close"][1]
+    out = {"no_entries_before": "%02d:%02d" % divmod(o + 15, 60),
+           "no_entries_after": "%02d:%02d" % divmod(c - 30, 60),
+           "flat_by": "%02d:%02d" % divmod(c - 5, 60)}
+    own = cfg if key == "us" else ((cfg.get("markets") or {}).get(key) or {})
+    for k in out:
+        if k in own:
+            out[k] = own[k]
+    return out
+
+
+def localize(text):
+    """New York wording -> the current market's. A no-op for New York."""
+    if MARKET == "us" or not isinstance(text, str):
+        return text
+    m = MARKETS[MARKET]
+    text = re.sub(r"\bET\b", m["zone"], text)
+    text = text.replace("New York", m["city"]).replace("NYSE", m["exchange"])
+    if globals().get("PRICES_IN_MARKET_CURRENCY"):
+        # this tool prints share prices only, so $ means the market's own currency
+        fmt = {"GBp": r"\1p", "EUR": "\u20ac\\1"}[m["currency"]]
+        text = re.sub(r"\$(\d[\d,]*(?:\.\d+)?)", fmt, text)
+    return text
+
+
+def say(*args, **kw):
+    """print(), in the current market's wording."""
+    print(*(localize(a) for a in args), **kw)
+
+
+def ampm_of(hm_pair):
+    h, mi = hm_pair
+    return "%d:%02d %s" % (h % 12 or 12, mi, "AM" if h < 12 else "PM")
+
 
 def _nth_sunday(year, month, n):
     d = datetime.date(year, month, 1)
@@ -136,27 +280,46 @@ def _nth_sunday(year, month, n):
     return d + datetime.timedelta(weeks=n - 1)
 
 
+def _last_sunday(year, month):
+    d = datetime.date(year + month // 12, month % 12 + 1, 1) - datetime.timedelta(days=1)
+    return d - datetime.timedelta(days=(d.weekday() + 1) % 7)
+
+
 def eastern_offset(utc):
-    """Hours from UTC for New York: -4 in daylight time, -5 otherwise.
-    DST runs from 2:00 a.m. on the second Sunday of March to 2:00 a.m. on the
-    first Sunday of November (US rule since 2007)."""
+    """Hours from UTC for the current market's clock (New York by default).
+    New York: -4 in daylight time, -5 otherwise; DST from 2:00 a.m. on the second
+    Sunday of March to 2:00 a.m. on the first Sunday of November (US rule since 2007).
+    London (0) and Frankfurt (+1): one hour more from 1:00 UTC on the last Sunday of
+    March to 1:00 UTC on the last Sunday of October (EU rule)."""
+    m = MARKETS[MARKET]
     y = utc.year
-    start = datetime.datetime.combine(_nth_sunday(y, 3, 2), datetime.time(7, 0))   # 2:00 EST
-    end = datetime.datetime.combine(_nth_sunday(y, 11, 1), datetime.time(6, 0))    # 2:00 EDT
+    if m["dst"] == "us":
+        start = datetime.datetime.combine(_nth_sunday(y, 3, 2), datetime.time(7, 0))   # 2:00 EST
+        end = datetime.datetime.combine(_nth_sunday(y, 11, 1), datetime.time(6, 0))    # 2:00 EDT
+    else:
+        start = datetime.datetime.combine(_last_sunday(y, 3), datetime.time(1, 0))
+        end = datetime.datetime.combine(_last_sunday(y, 10), datetime.time(1, 0))
     naive = utc.replace(tzinfo=None)
-    return -4 if start <= naive < end else -5
+    return m["std"] + (1 if start <= naive < end else 0)
 
 
 def to_eastern(utc):
+    """UTC -> the current market's local time (New York by default)."""
     return utc.replace(tzinfo=None) + datetime.timedelta(hours=eastern_offset(utc))
 
 
 def eastern_to_utc(local):
-    for off in (-4, -5):
+    """The current market's local time -> UTC."""
+    std = MARKETS[MARKET]["std"]
+    for off in (std + 1, std):
         utc = local - datetime.timedelta(hours=off)
         if eastern_offset(utc) == off:
             return utc
-    return local + datetime.timedelta(hours=5)
+    return local - datetime.timedelta(hours=std)
+
+
+use_market("us")
+# ---------------------------------------------------------------- end of markets
 
 
 def parse_now(text):
@@ -189,9 +352,9 @@ def trading_day(d):
     """(is_trading_day, reason). Weekends and the NYSE holiday list."""
     if d.weekday() >= 5:
         return False, "weekend"
-    name = NYSE_HOLIDAYS.get(d.isoformat())
+    name = HOLIDAYS.get(d.isoformat())
     if name:
-        return False, "NYSE holiday: " + name
+        return False, MARKETS[MARKET]["exchange"] + " holiday: " + name
     return True, ""
 
 
@@ -225,14 +388,15 @@ def window_check(now_et, c):
     stamp = now_et.strftime("%a %Y-%m-%d %H:%M")
     if not ok:
         return ["window: the market is closed today (%s, %s New York)" % (why, stamp)], warns
-    close = EARLY if d.isoformat() in NYSE_EARLY_CLOSE else CLOSE
+    close = EARLY if d.isoformat() in EARLY_CLOSES else CLOSE
     if t < OPEN or now_et.time() >= close:
         return ["window: the market is closed (%s New York; the session is %s to %s)"
                 % (stamp, OPEN.strftime("%H:%M"), close.strftime("%H:%M"))], warns
-    if close == EARLY and after is not None:
-        after = _shift(after, 3)
-        warns.append("early close at 1:00 p.m. today (%s): no new entries after %s"
-                     % (NYSE_EARLY_CLOSE[d.isoformat()], after.strftime("%H:%M")))
+    if close == EARLY and close != CLOSE and after is not None:
+        after = _shift(after, (CLOSE_MIN - EARLY_MIN) / 60.0)
+        warns.append("early close at %s today (%s): no new entries after %s"
+                     % ("1:00 p.m." if MARKET == "us" else ampm_of((EARLY.hour, EARLY.minute)),
+                        EARLY_CLOSES[d.isoformat()], after.strftime("%H:%M")))
     if before is not None and t < before:
         return ["window: no new entries before %s New York (it is %s)" % (before.strftime("%H:%M"),
                                                                           t.strftime("%H:%M"))], warns
@@ -370,11 +534,15 @@ def day_trades(state, today):
 
 # ---------------------------------------------------------------- the check
 
-def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=None, price_times=None):
+def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=None, price_times=None,
+          fx=None):
     """Pure function. Returns {"results": [...], "pass": n, "block": n, "warnings": [...]}.
 
     now          naive UTC (default: the real clock); its New York date is "today"
-    price_times  {SYM: naive UTC time of that price}; None = every price counts as fresh"""
+    price_times  {SYM: naive UTC time of that price}; None = every price counts as fresh
+    fx           {"GBPUSD": (rate, naive UTC time or None), "EURUSD": ...}: dollars per pound or euro,
+                 for London (prices in pence) and Frankfurt (euros) orders. Every limit stays in dollars."""
+    use_market("us")
     c = dict(DEFAULTS)
     c.update(cfg or {})
     prices = {str(k).upper(): float(v) for k, v in (prices or {}).items() if _f(v)}
@@ -413,12 +581,38 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         if t is None:
             return None
         age = (now_utc - t).total_seconds()
-        return prices[sym] if -60 <= age <= FRESH_MINUTES * 60 else None
+        late = MARKETS[market_of(sym)]["delay"]   # London and Xetra quotes run about 15 minutes behind
+        return prices[sym] if -60 <= age <= (FRESH_MINUTES + late) * 60 else None
 
     for i, o in enumerate(orders, 1):
         reasons, warns, info = [], [], []
         later = []                       # entry-only reasons, turned into warnings for an exit
         sym = str(o.get("symbol", "")).strip().upper()
+        mk = market_of(sym)
+        k_usd = 1.0                      # dollars per unit of the order's price (a penny, a euro, a dollar)
+        if mk != "us":
+            m = MARKETS[mk]
+            rate, rate_t = (fx or {}).get(m["fx"], (None, None))
+            if not rate:
+                reasons.append("fx: %s is priced in %s and your limits are in dollars, but there is no %s rate: "
+                               "run alerts.py quote %s --write (it saves the rate to trader/prices.json)"
+                               % (sym, "pence" if m["currency"] == "GBp" else "euros", m["fx"], sym))
+            else:
+                k_usd = float(rate) / m["per_unit"]
+                info.append("%s at %s: 1%s = $%s" % (m["fx"], ("%.4f" % rate).rstrip("0"),
+                                                       "p" if m["currency"] == "GBp" else " euro",
+                                                       ("%.4f" % k_usd).rstrip("0")))
+                if rate_t and (now_utc - rate_t).total_seconds() > FX_HOURS * 3600:
+                    warns.append("the %s rate is from %s UTC, over %d hours old: refresh it with alerts.py quote "
+                                 "%s --write" % (m["fx"], rate_t.strftime("%Y-%m-%d %H:%M"), FX_HOURS, sym))
+            use_market(mk)
+            mt = market_times(c)
+            o_win, o_warn = window_check(to_eastern(now_utc), dict(c, **mt))
+            o_win, o_warn = [localize(x) for x in o_win], [localize(x) for x in o_warn]
+            use_market("us")
+            warns.extend(o_warn)
+        else:
+            o_win = win_reasons
         side = str(o.get("side", "")).strip().lower()
         typ = str(o.get("type", "market")).strip().lower()
         tif = str(o.get("time_in_force", "day")).strip().lower()
@@ -479,9 +673,9 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                                "(\"allow_options\": false)" % sym)
             else:
                 warns.append("option order: options can lose 100%% of what you pay")
-        elif sym and ("/" in sym or not TICKER.match(sym)):
-            reasons.append("asset: %s does not look like a US stock or ETF ticker; "
-                           "this pack trades stocks and ETFs only" % sym)
+        elif sym and ("/" in sym or not (TICKER.match(sym) or ABROAD.match(sym))):
+            reasons.append("asset: %s does not look like a US, London (.L) or Frankfurt (.DE) stock or ETF "
+                           "ticker; this pack trades stocks and ETFs only" % sym)
 
         # the reference price: what one share costs to get in
         plan_entry = _f(plan.get("entry"))
@@ -509,7 +703,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             value = _f(notional)
         elif q:
             if ref:
-                value = q * ref
+                value = q * ref * k_usd
 
         # entry or exit
         held = acct["shares"].get(sym, 0.0)
@@ -593,8 +787,8 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                 else:
                     risk_c = int(round(abs(ref - stop) * 100))
                     risk_ps = risk_c / 100.0
-                    shares = q if q is not None else ((value or 0) / ref)
-                    max_loss = round(shares * risk_ps, 2)
+                    shares = q if q is not None else ((value or 0) / (ref * k_usd))
+                    max_loss = round(shares * risk_ps * k_usd, 2)
                     cap = _f(c.get("max_loss_per_trade_usd"))
                     if cap and max_loss > cap + CENT:
                         later.append("loss: %s shares x %s risk a share = %s at the stop, over your %s max loss "
@@ -623,7 +817,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             if cap_t and len(entries_today) + batch_entries >= cap_t:
                 later.append("trades: %d entries placed today plus %d passed earlier in this batch, your limit "
                              "is %d a day" % (len(entries_today), batch_entries, cap_t))
-            later.extend(win_reasons)
+            later.extend(o_win)
             if c.get("pdt_guard") and pdt_n >= 3:
                 later.append("pdt: %d day trades in the last 5 business days (%s); a 4th trips the "
                              "pattern-day-trader rule your broker applies (\"pdt_guard\": true)"
@@ -672,7 +866,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                 if q is not None:
                     acct["shares"][sym] = held + q
                 elif ref and value is not None:
-                    acct["shares"][sym] = held + value / ref
+                    acct["shares"][sym] = held + value / (ref * k_usd)
             elif side == "sell":
                 if value is not None:
                     acct["cash"] += value
@@ -680,9 +874,9 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                 if q is not None:
                     acct["shares"][sym] = held - q
                 elif ref and value is not None:
-                    acct["shares"][sym] = held - value / ref
+                    acct["shares"][sym] = held - value / (ref * k_usd)
         results.append({
-            "index": i, "symbol": sym, "side": side, "kind": kind,
+            "index": i, "symbol": sym, "market": mk, "side": side, "kind": kind,
             "amount": money(_f(notional) or 0) if notional is not None else ("%s shares" % qty),
             "value_usd": round(value, 2) if value is not None else None,
             "entry_ref": round(ref, 2) if ref else None, "entry_ref_from": ref_from,
@@ -765,6 +959,20 @@ def load_prices(pdoc):
     return out, times
 
 
+def load_fx(pdoc):
+    """prices.json "fx": {"GBPUSD": 1.3429} plus "fx_detail": {"GBPUSD": {"time": ...}} ->
+    {"GBPUSD": (1.3429, naive UTC time or None)}. trader-alerts writes both."""
+    if not isinstance(pdoc, dict) or not isinstance(pdoc.get("fx"), dict):
+        return {}
+    detail = pdoc.get("fx_detail") or {}
+    out = {}
+    for pair, rate in pdoc["fx"].items():
+        if _f(rate):
+            d = detail.get(pair) or {}
+            out[str(pair).upper()] = (float(rate), parse_utc(d.get("time")) or parse_utc(pdoc.get("as_of")))
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Check proposed orders against your limits (trader-risk).")
     ap.add_argument("--orders", default="trader/orders.json")
@@ -792,7 +1000,7 @@ def main(argv=None):
         pdoc = read_json(a.prices, "prices", required=False) or {}
         prices, times = load_prices(pdoc)
         state = read_json(a.state, "broker state", required=False)
-        res = check(orders, cfg, portfolio, prices, state, a.today, now, times)
+        res = check(orders, cfg, portfolio, prices, state, a.today, now, times, load_fx(pdoc))
         if pdoc.get("as_of"):
             res["prices_as_of"] = pdoc["as_of"]
         if not a.no_write:
@@ -809,9 +1017,9 @@ def main(argv=None):
                 fh.write("\n")
             os.replace(tmp, a.out)
     except RiskError as e:
-        print("check.py: %s" % e, file=sys.stderr)
+        say("check.py: %s" % e, file=sys.stderr)
         return 1
-    print(json.dumps(res, indent=2) if a.json else report(res))
+    say(json.dumps(res, indent=2) if a.json else report(res))
     return 1 if res["block"] else 0
 
 

@@ -97,6 +97,22 @@ and the max loss at the stop. Say plainly that a stop is an order, not a
 promise: in a fast market it can fill below the stop. Then hand over to
 `/trader-risk`.
 
+## London and Frankfurt
+
+A London (`.L`) or Frankfurt (`.DE`) plan is priced in pence or euros,
+but every limit stays in dollars. The tool converts with the GBP/USD or
+EUR/USD rate that `alerts.py quote <TICKER> --write` saves in
+`trader/prices.json` (or `--fx RATE`). With no rate it refuses: get the rate,
+never guess one. The report shows both: `421.50p = $5.66` a share.
+
+On 2026-11-10 with a $50 budget and a $5 max loss: WPP.L at 421.50p, stop
+417.75p (3.75p = $0.05 a share at 1.3431), bound by the $37.50 position cap:
+6 shares = $33.97, max loss $0.30.
+
+The order keeps Alpaca's shape, but Alpaca trades US stocks only:
+trader-broker will not send it. Tell the user to place the same bracket
+themselves at a broker that reaches the exchange (Interactive Brokers does).
+
 ## Example: the reel
 
 TSLA on Monday 2026-10-19. Opening-range breakout: entry 364.18 at 10:15 AM,

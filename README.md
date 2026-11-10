@@ -152,6 +152,69 @@ for the 60 days to October 19 2026, the 10:15 AM opening-range scan, Yahoo's
 TSLA headlines that morning, the House Clerk's 2026 index, real PTR text and
 real XBRL facts. They reproduce every number in the example above.
 
+## London and Frankfurt
+
+The day-trading chain also runs on the London Stock Exchange and on Xetra
+(Frankfurt). A ticker's Yahoo suffix picks the market: `VOD.L` is London,
+`SAP.DE` is Frankfurt, anything else is New York. Every tool then uses that
+market's own clock, holidays and wording.
+
+```bash
+python3 trader-scanner/scan.py universe --market london                # the bundled 100-stock London list
+python3 trader-scanner/scan.py orb --market london                     # after 8:20 AM London time
+python3 trader-scanner/scan.py orb --market frankfurt                  # after 9:20 AM Frankfurt time
+python3 trader-alerts/alerts.py clock --market frankfurt               # is Xetra open?
+python3 trader-alerts/alerts.py quote WPP.L --write                    # price in pence + today's GBP/USD rate
+python3 trader-entry/entry.py check WPP.L                              # then exit, timemachine, budget, risk
+```
+
+| | London (LSE) | Frankfurt (Xetra) |
+| --- | --- | --- |
+| suffix | `.L` (`VOD.L`, `BT-A.L`) | `.DE` (`SAP.DE`, `1COV.DE`) |
+| session | 08:00 to 16:30 London time | 09:00 to 17:30 Frankfurt time |
+| half days | 12:30 close on Christmas Eve and New Year's Eve | none: closed Dec 24 and Dec 31 |
+| prices | pence (`421.50p`) | euros (`€215.70`) |
+| default entry window | 08:15 to 16:00, flat by 16:25 | 09:15 to 17:00, flat by 17:25 |
+| stock list | `trader-scanner/universe-london.txt`, 100 stocks | `trader-scanner/universe-frankfurt.txt`, 42 stocks |
+
+What is different from New York:
+
+- **Your limits stay in dollars.** `trader-alerts quote` saves the GBP/USD or
+  EUR/USD rate next to the price in `trader/prices.json`, and `trader-budget`
+  and `trader-risk` convert pence and euros to dollars before they compare
+  anything with your budget or your max loss. No rate, no order. `size.py --fx
+  1.34` gives one by hand.
+- **Yahoo's free London and Xetra bars run about 15 minutes behind.** The
+  scanner cuts the clock to what Yahoo has and says so. Prices are delayed:
+  never real time.
+- **Yahoo's European 5-minute bars have small gaps**, even for the biggest
+  stocks. Abroad, the scanner counts a chart when its opening range is whole
+  and at most 1 in 5 later bars is missing. The Time Machine keeps only
+  complete sessions and lists the ones it left out.
+- **Alpaca trades US stocks only.** `trader-broker` marks a London or
+  Frankfurt order NOT FOR ALPACA and never sends it. Place it yourself at a
+  broker that reaches the exchange (Interactive Brokers does), as the same
+  bracket.
+- **No SEC filings.** `trader-news` reads Yahoo headlines for `.L` and `.DE`
+  tickers. London companies file through the RNS and German ones through the
+  Bundesanzeiger; neither is read here.
+- **The stock lists are starter lists**, not the whole exchange and not an
+  official index: large, liquid names, each checked on Yahoo on 2026-11-10.
+  Edit the files to change them.
+- **The holiday lists cover 2026 and 2027.** London uses the England and Wales
+  bank holidays; Xetra uses Deutsche Börse's trading calendar. Check the
+  exchanges' own calendars before relying on them.
+
+To change the entry window abroad, add a `markets` block to
+`trader/config.json`. The top-level times stay New York's:
+
+```json
+"markets": {
+  "london": {"no_entries_before": "08:15", "no_entries_after": "16:00", "flat_by": "16:25"},
+  "frankfurt": {"no_entries_before": "09:15", "no_entries_after": "17:00", "flat_by": "17:25"}
+}
+```
+
 ## Fine print
 
 **Not financial advice.** This is software that reads public data and does

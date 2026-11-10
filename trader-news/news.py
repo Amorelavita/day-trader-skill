@@ -191,7 +191,17 @@ class Fetcher(object):
             raise NewsError("could not reach %s: %s" % (url, exc.reason))
 
 
+ABROAD = (".L", ".DE")   # London and Frankfurt (Xetra) tickers: Yahoo keeps the suffix, and the SEC has no filings
+
+
+def is_abroad(ticker):
+    t = ticker.upper()
+    return any(t.endswith(x) and len(t) > len(x) for x in ABROAD)
+
+
 def yahoo_symbol(ticker):
+    if is_abroad(ticker):
+        return ticker.upper()
     return ticker.upper().replace(".", "-")
 
 
@@ -386,6 +396,8 @@ def collect(fetcher, watch, state, sec=True, forms=("8-K",), count=10, errors=No
             items += parse_rss(fetcher.get(YAHOO % yahoo_symbol(t), "yahoo-%s.xml" % t), t)
         except NewsError as exc:
             errors.append("headlines for %s: %s" % (t, exc))
+    if sec and all(is_abroad(t) for t in watch):
+        sec = False   # nothing for the SEC to answer: London and Frankfurt companies file at home
     if sec:
         try:
             ciks = cik_map(fetcher, state)
@@ -393,6 +405,8 @@ def collect(fetcher, watch, state, sec=True, forms=("8-K",), count=10, errors=No
             errors.append("SEC ticker list: %s" % exc)
             ciks = {}
         for t in sorted(watch):
+            if is_abroad(t):
+                continue   # London files with the FCA (RNS), Frankfurt with the Bundesanzeiger: not on EDGAR
             cik = ciks.get(t)
             if not cik:
                 if ciks:

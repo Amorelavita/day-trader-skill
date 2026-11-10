@@ -1,0 +1,44 @@
+# Frankfurt starter list: 42 large, liquid Xetra stocks (Yahoo symbols, .DE), checked on Yahoo 2026-11-10.
+# Not the whole exchange and not an official index list. One SYMBOL|Name a line.
+ADS.DE|adidas AG
+AIR.DE|Airbus SE
+ALV.DE|Allianz SE
+BAS.DE|BASF SE
+BAYN.DE|Bayer Aktiengesellschaft
+BEI.DE|Beiersdorf Aktiengesellschaft
+BMW.DE|Bayerische Motoren Werke Aktiengesellschaft
+BNR.DE|Brenntag SE
+CBK.DE|Commerzbank AG
+CON.DE|Continental Aktiengesellschaft
+DTG.DE|Daimler Truck Holding AG
+DBK.DE|Deutsche Bank Aktiengesellschaft
+DB1.DE|Deutsche Börse AG
+DHL.DE|DHL AG
+DTE.DE|Deutsche Telekom AG
+EOAN.DE|E.ON SE
+FRE.DE|Fresenius SE & Co. KGaA
+FME.DE|Fresenius Medical Care AG
+HNR1.DE|Hannover Rück SE
+HEI.DE|Heidelberg Materials AG
+HEN3.DE|Henkel AG & Co. KGaA
+IFX.DE|Infineon Technologies AG
+MBG.DE|Mercedes-Benz Group AG
+MRK.DE|Merck KGaA
+MTX.DE|MTU Aero Engines AG
+MUV2.DE|Münchener Rückversicherungs-Gesellschaft Aktiengesellschaft in München
+P911.DE|Dr. Ing. h.c. F. Porsche AG
+PAH3.DE|Porsche Automobil Holding SE
+QIA.DE|Qiagen N.V.
+RHM.DE|Rheinmetall AG
+RWE.DE|RWE Aktiengesellschaft
+SAP.DE|SAP SE
+SRT3.DE|Sartorius Aktiengesellschaft
+SIE.DE|Siemens Aktiengesellschaft
+ENR.DE|Siemens Energy AG
+SHL.DE|Siemens Healthineers AG
+SY1.DE|Symrise AG
+VNA.DE|Vonovia SE
+VOW3.DE|Volkswagen AG
+ZAL.DE|Zalando SE
+G1A.DE|GEA Group Aktiengesellschaft
+1COV.DE|Covestro AG

@@ -1,0 +1,102 @@
+# London starter list: 100 large, liquid LSE stocks (Yahoo symbols, .L), checked on Yahoo 2026-11-10.
+# Not the whole exchange and not an official index list. One SYMBOL|Name a line.
+AAL.L|Anglo American plc
+ABF.L|Associated British Foods plc
+ADM.L|Admiral Group plc
+ANTO.L|Antofagasta plc
+AUTO.L|Autotrader Group plc
+AV.L|Aviva plc
+AZN.L|AstraZeneca PLC
+BA.L|BAE Systems plc
+BARC.L|Barclays PLC
+BATS.L|British American Tobacco p.l.c.
+BEZ.L|Beazley PLC
+BKG.L|The Berkeley Group Holdings plc
+BNZL.L|Bunzl plc
+BP.L|BP p.l.c.
+BRBY.L|Burberry Group plc
+BT-A.L|BT Group plc
+CCH.L|Coca-Cola HBC AG
+CNA.L|Centrica plc
+CPG.L|Compass Group PLC
+CRDA.L|Croda International Plc
+CTEC.L|Convatec Group PLC
+DCC.L|DCC Energy plc
+DGE.L|Diageo plc
+DPLM.L|Diploma PLC
+EDV.L|Endeavour Mining plc
+ENT.L|Entain Plc
+EXPN.L|Experian plc
+EZJ.L|easyJet plc
+FCIT.L|F&C Investment Trust Ord
+FRES.L|Fresnillo plc
+GAW.L|Games Workshop Group PLC
+GLEN.L|Glencore plc
+GSK.L|GSK plc
+HIK.L|Hikma Pharmaceuticals PLC
+HLMA.L|Halma plc
+HLN.L|Haleon plc
+HSBA.L|HSBC Holdings plc
+HWDN.L|Howden Joinery Group Plc
+IAG.L|International Consolidated Airlines Group S.A.
+ICG.L|ICG plc
+IHG.L|InterContinental Hotels Group PLC
+III.L|3i Group Ord
+IMB.L|Imperial Brands PLC
+IMI.L|IMI plc
+INF.L|Informa plc
+ITRK.L|Intertek Group plc
+JD.L|JD Sports Fashion Plc
+KGF.L|Kingfisher plc
+LAND.L|Land Securities Group Plc
+LGEN.L|Legal & General Group Plc
+LLOY.L|Lloyds Banking Group plc
+LMP.L|LondonMetric Property Plc
+LSEG.L|London Stock Exchange Group plc
+MKS.L|Marks and Spencer Group plc
+MNDI.L|Mondi plc
+MNG.L|M&G plc
+MRO.L|Melrose Industries PLC
+NG.L|National Grid plc
+NWG.L|NatWest Group plc
+NXT.L|NEXT plc
+PCT.L|Polar Capital Technology Ord
+PRU.L|Prudential plc
+PSH.L|Pershing Square Holdings, Ltd.
+PSN.L|Persimmon Plc
+PSON.L|Pearson plc
+REL.L|RELX PLC
+RIO.L|Rio Tinto Group
+RKT.L|Reckitt Benckiser Group plc
+RMV.L|Rightmove plc
+RR.L|Rolls-Royce Holdings plc
+RTO.L|Rentokil Initial plc
+SBRY.L|J Sainsbury plc
+SDR.L|Schroders PLC
+SGE.L|The Sage Group plc
+SGRO.L|SEGRO Plc
+SHEL.L|Shell plc
+SMIN.L|Smiths Group plc
+SMT.L|Scottish Mortgage Ord
+SN.L|Smith & Nephew plc
+SPX.L|Spirax Group plc
+SSE.L|SSE plc
+STAN.L|Standard Chartered PLC
+SVT.L|Severn Trent PLC
+TSCO.L|Tesco PLC
+TW.L|Taylor Wimpey plc
+ULVR.L|Unilever PLC
+UTG.L|Unite Group PLC
+UU.L|United Utilities Group PLC
+VOD.L|Vodafone Group Public Limited Company
+WEIR.L|Weir PLC
+WPP.L|WPP plc
+WTB.L|Whitbread plc
+ALW.L|Alliance Witan Ord
+BAB.L|Babcock International Group PLC
+BTRW.L|Barratt Redrow plc
+HSX.L|Hiscox Ltd
+IGG.L|IG Group Holdings plc
+STJ.L|St. James's Place plc
+AAF.L|Airtel Africa Plc
+BLND.L|British Land Company PLC

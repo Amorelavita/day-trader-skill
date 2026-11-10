@@ -191,6 +191,14 @@ card reads "Claude wants to use Place stock order" with that JSON and two
 buttons: Allow once, Deny. Allow once sends it to the paper account. The
 `why` and the plan stay in the file; they are never sent.
 
+## London and Frankfurt
+
+Alpaca trades US stocks only. A London (`.L`) or Frankfurt (`.DE`) order is
+marked NOT FOR ALPACA and never shown as ready, whatever trader-risk said.
+Tell the user to place it themselves at a broker that reaches the exchange,
+as the same bracket: Interactive Brokers does (`"broker": "ibkr"` in the
+config, then its connector drafts it and they approve it in IBKR).
+
 ## What it never does
 
 - Never places an order without all three gates, and never two orders on one yes.
